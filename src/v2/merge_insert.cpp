@@ -66,14 +66,21 @@ namespace diskann {
         _active_del_1(false), _clearing_index_0(false),
         _clearing_index_1(false), _switching_disk_prefixes(false),
         _check_switch_index(false), _check_switch_delete(false) {
-    _merge_th = MERGE_TH;
+    // 设置合并阈值（MERGE_TH为预定义常量）
+    _merge_th = MERGE_TH; 
+
     _single_file_index = single_file_index;
+    
+    // 设置距离函数
     this->_dist_metric = dist_metric;
+    
+    // 初始化两个内存索引（_mem_index_0 和 _mem_index_1）
     _mem_index_0 = std::make_shared<diskann::Index<T, TagT>>(
         this->_dist_metric, dim, _merge_th * 2, 1, _single_file_index, 1);
     _mem_index_1 = std::make_shared<diskann::Index<T, TagT>>(
         this->_dist_metric, dim, _merge_th * 2, 1, _single_file_index, 1);
-
+    
+    // 设置内存索引参数
     _paras_mem.Set<unsigned>("L", parameters.Get<unsigned>("L_mem"));
     _paras_mem.Set<unsigned>("R", parameters.Get<unsigned>("R_mem"));
     _paras_mem.Set<unsigned>("C", parameters.Get<unsigned>("C"));
@@ -81,19 +88,23 @@ namespace diskann {
     _paras_mem.Set<unsigned>("num_rnds", 2);
     _paras_mem.Set<bool>("saturate_graph", 0);
 
+    // 设置内存索引参数
     _paras_disk.Set<unsigned>("L", parameters.Get<unsigned>("L_disk"));
     _paras_disk.Set<unsigned>("R", parameters.Get<unsigned>("R_disk"));
     _paras_disk.Set<unsigned>("C", parameters.Get<unsigned>("C"));
     _paras_disk.Set<float>("alpha", parameters.Get<float>("alpha_disk"));
     _paras_disk.Set<unsigned>("num_rnds", 2);
     _paras_disk.Set<bool>("saturate_graph", 0);
-
-    _num_search_threads = parameters.Get<_u32>("num_search_threads");
-    _beamwidth = parameters.Get<uint32_t>("beamwidth");
-    _num_nodes_to_cache = parameters.Get<_u32>("nodes_to_cache");
-
+    
+    // 获取其他参数
+    _num_search_threads = parameters.Get<_u32>("num_search_threads"); // 搜索线程数
+    _beamwidth = parameters.Get<uint32_t>("beamwidth"); // BeamSearch的宽度
+    _num_nodes_to_cache = parameters.Get<_u32>("nodes_to_cache"); // 缓存节点数量
+    
+    // 初始化搜索线程池
     _search_tpool = new ThreadPool(_num_search_threads);
 
+    // 初始化索引文件路径前缀
     _mem_index_prefix = mem_prefix;
     _deleted_tags_file = mem_prefix + "_deleted.tags";
     _disk_index_prefix_in = disk_prefix_in;
@@ -108,10 +119,10 @@ namespace diskann {
 #else
     reader.reset(new LinuxAlignedFileReader());
 #endif
-
+    // 初始化磁盘索引
     _disk_index = new diskann::PQFlashIndex<T, TagT>(
         this->_dist_metric, reader, _single_file_index, true);
-
+    // 加载磁盘索引 
     std::string pq_prefix = _disk_index_prefix_in + "_pq";
     std::string disk_index_file = _disk_index_prefix_in + "_disk.index";
     int         res =
@@ -121,7 +132,7 @@ namespace diskann {
                     << std::endl;
       exit(-1);
     }
-
+    // 设置临时文件夹路径并输出调试信息
     TMP_FOLDER = working_folder;
     std::cout << "TMP_FOLDER inside MergeInsert : " << TMP_FOLDER << std::endl;
   }
@@ -236,7 +247,6 @@ namespace diskann {
           _mem_index_1->lazy_delete(tag);
       }
  }
-
  template<typename T, typename TagT>
     void MergeInsert<T,TagT>::search_sync(const T* query, const uint64_t K, const uint64_t search_L,
                      TagT* tags, float * distances, QueryStats * stats)
@@ -290,7 +300,7 @@ namespace diskann {
         for(auto iter : best)
             best_vec.emplace_back(iter);
 //        std::sort(best_vec.begin(), best_vec.end());
-        if (best_vec.size() > K)
+        if (best_vec.size() > K) // TODO: 这里逻辑有问题，如果查询小于K，就不会进行deletion_set的过滤了
 //          best_vec.erase(best_vec.begin() + K, best_vec.end());
         //aggregate results, sort and pick top K candidates
     {
@@ -504,13 +514,19 @@ namespace diskann {
      void MergeInsert<T,TagT>::save_del_set()
     {
 	    {
+            // 使用原子操作检查并切换删除集合的活动状态标志 _check_switch_delete，避免并发修改
 		    bool expected_value = false;
+            // 只有当 _check_switch_delete 为 false 时才能修改为 true
 		    _check_switch_delete.compare_exchange_strong(expected_value, true);
+            // 获取删除锁，保证对删除集合的操作是线程安全的
 		    std::unique_lock<std::shared_timed_mutex> lock(_delete_lock);
+
 		    if(_active_delete_set == 0)
 		    {
+                // 如果 _deletion_set_1 是非活动状态，清理 _deletion_set_1
 			     _deletion_set_1.clear();
 			     bool expected_active = false;
+                 // 尝试设置 _active_del_1 为 true，表示 _deletion_set_1 现在可以接收新的删除点
 			     if(_active_del_1.compare_exchange_strong(expected_active, true)) {
 				     diskann::cout << "Cleared _deletion_set_1 - ready to accept new points" << std::endl;
 			     }
@@ -519,7 +535,7 @@ namespace diskann {
 				     diskann::cout << "Failed to clear _deletion_set_1" << std::endl;
 			   	}
 		     }
-		     else
+		     else // 如果 _deletion_set_0 是非活动状态，清理 _deletion_set_0
 		     {
 			     _deletion_set_0.clear();
 			     bool expected_active = false;
@@ -531,16 +547,21 @@ namespace diskann {
 				     diskann::cout << "Failed to clear _deletion_set_0" << std::endl;
 			     }
 		     }
+             // 切换激活的删除集合，0 和 1 之间交替
 		     _active_delete_set = 1 - _active_delete_set;
+
+             // 根据切换后的删除集合，重置非活动集合的状态
 		     bool expected_active  = true;
 		     if(_active_delete_set == 0)
 			     _active_del_1.compare_exchange_strong(expected_active, false);
 		     else
 			     _active_del_0.compare_exchange_strong(expected_active, false);
+            
+            // 恢复 _check_switch_delete 为 false，允许下次切换
 		     expected_value = true;
 		     _check_switch_delete.compare_exchange_strong(expected_value, false);
 	     }
-
+     // 根据当前激活的删除集合，保存删除的标签
 	 if(_active_delete_set == 0)
 	 {
          std::vector<TagT> * del_vec = new std::vector<TagT>(_deletion_set_1.size());

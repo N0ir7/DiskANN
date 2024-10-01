@@ -50,7 +50,11 @@ bool                  save_index_as_one_file;
 std::string           TMP_FOLDER;
 std::string           query_file = "";
 std::string           truthset_file = "";
-
+/**
+ * 用于在每次迭代中进行数据集的动态管理，包括从活跃集合中选取要删除的元素，
+ * 从非活跃集合中选取要插入的元素，并将这些数据保存在指定的文件中。
+ * 通过该函数，保证了在每次迭代中，活跃数据集和非活跃数据集可以进行平衡和更新
+*/
 template<typename T, typename TagT = uint32_t>
 void seed_iter(tsl::robin_set<uint32_t> &active_set,
                tsl::robin_set<uint32_t> &inactive_set,
@@ -441,18 +445,25 @@ void run_iter(diskann::MergeInsert<T> & merge_insert,
   // files for mem-DiskANN
   std::string mem_pts_file = mem_prefix + ".data_orig";
   std::string mem_tags_file = mem_prefix + ".tags_orig";
-  std::this_thread::sleep_for(std::chrono::seconds(10));
+  std::this_thread::sleep_for(std::chrono::seconds(10)); // 休眠10秒以确保同步
 
+  // 异步启动合并任务，调用 merge_kernel 函数
   ::merge_future =
       std::async(std::launch::async, merge_kernel<T>, std::ref(merge_insert));
 
+  // 在插入和删除操作未完成时，不断执行搜索操作
   while (!(::_insertions_done.load() && ::_del_done.load())) {
     std::cout << "Search at " << ::global_timer.elapsed() / 1000000
               << " seconds " << std::endl;
+
+    // 调用 search_kernel 执行搜索操作，使用 active_set
     search_kernel<T>(merge_insert, active_set);
+
+    // 每次搜索后休眠 5 秒
     std::this_thread::sleep_for(std::chrono::milliseconds(5000));
   }
 
+  // 如果插入和删除操作已完成，重置状态并执行后续操作
   if (::_insertions_done.load() && ::_del_done.load()) {
     ::_insertions_done.store(false);
     ::_del_done.store(false);
@@ -460,6 +471,8 @@ void run_iter(diskann::MergeInsert<T> & merge_insert,
     std::cout << "Searching all indices" << std::endl;
     std::cout << "Search at " << ::global_timer.elapsed() / 1000000
               << " seconds " << std::endl;
+
+    // 调用 search_kernel 执行搜索操作，使用 active_set
     search_kernel<T>(merge_insert, active_set, true);
 
     std::cout << "ITER: Seeding iteration"
@@ -468,20 +481,28 @@ void run_iter(diskann::MergeInsert<T> & merge_insert,
     tsl::robin_set<uint32_t> deleted_tags;
     seed_iter<T, TagT>(active_set, inactive_set, mem_pts_file, mem_tags_file,
                        deleted_tags);
+
+    // 异步启动删除操作，调用 deletion_kernel 函数
     ::delete_future = std::async(std::launch::async, deletion_kernel<T, TagT>,
                                  std::ref(merge_insert), deleted_tags);
+    
+    // 异步启动插入操作，调用 insertion_kernel 函数
     ::insert_future =
         std::async(std::launch::async, insertion_kernel<T>,
                    std::ref(merge_insert), mem_pts_file, mem_tags_file);
   }
-
+  // 检查合并任务的状态
   std::future_status merge_status;
   do {
+    // 非阻塞式等待合并任务完成，每次等待1毫秒
     merge_status = ::merge_future.wait_for(std::chrono::milliseconds(1));
     std::cout << "Search at " << ::global_timer.elapsed() / 1000000
               << " seconds " << std::endl;
+    
+    // 在合并任务进行过程中，不断执行搜索操作
     search_kernel<T>(merge_insert, active_set);
 
+    // 每次搜索后休眠1秒
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   } while ((merge_status != std::future_status::ready));
 }

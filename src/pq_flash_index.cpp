@@ -173,46 +173,72 @@ namespace diskann {
     diskann::cout << "Setting up thread-specific contexts for nthreads: "
                   << nthreads << "\n";
 // omp parallel for to generate unique thread IDs
+// num_threads 表示使用的线程数量
 #pragma omp parallel for num_threads((int) nthreads)
     for (_s64 thread = 0; thread < (_s64) nthreads; thread++) {
+      // omp critical 关键区域，确保只有一个线程同时执行此代码块
 #pragma omp critical
       {
+        // 为每个线程注册 I/O 上下文
         this->reader->register_thread();
         IOContext &     ctx = this->reader->get_ctx();
+        // 创建 QueryScratch 对象，用于存储查询相关的临时数据
         QueryScratch<T> scratch;
+
+        // 分配坐标缓存空间，内存对齐为 256 字节
         _u64 coord_alloc_size = ROUND_UP(MAX_N_CMPS * this->aligned_dim, 256);
         diskann::alloc_aligned((void **) &scratch.coord_scratch,
                                coord_alloc_size, 256);
+
+        // 分配扇区缓存空间，用于存储从磁盘读取的数据，每个扇区大小为 4KB, 预分配128个扇区大小空间
         diskann::alloc_aligned((void **) &scratch.sector_scratch,
                                MAX_N_SECTOR_READS * SECTOR_LEN, SECTOR_LEN);
+
+        // 为临时的距离计算缓冲区分配内存，对齐为 256 字节
         diskann::alloc_aligned((void **) &scratch.aligned_scratch,
                                256 * sizeof(float), 256);
+
+        // 分配 PQ 坐标缓存空间，用于快速 PQ 解码计算（PQ码）
         diskann::alloc_aligned((void **) &scratch.aligned_pq_coord_scratch,
                                32768 * 32 * sizeof(_u8), 256);
+
+        // 分配 PQ 表距离缓存，用于存储距离计算结果（PQ码表）
         diskann::alloc_aligned((void **) &scratch.aligned_pqtable_dist_scratch,
                                25600 * sizeof(float), 256);
+
+        // 分配距离缓存，用于临时存储每个节点的距离计算
         diskann::alloc_aligned((void **) &scratch.aligned_dist_scratch,
                                512 * sizeof(float), 256);
+
+        // 分配查询向量缓存，存储原始类型的查询向量，内存对齐为 8 个 T 类型大小
         diskann::alloc_aligned((void **) &scratch.aligned_query_T,
                                this->aligned_dim * sizeof(T), 8 * sizeof(T));
+
+        // 分配查询向量的浮点型表示，用于后续的计算
         diskann::alloc_aligned((void **) &scratch.aligned_query_float,
                                this->aligned_dim * sizeof(float),
                                8 * sizeof(float));
 
+        // 初始化分配的缓冲区，确保它们在使用前清零
         memset(scratch.sector_scratch, 0, MAX_N_SECTOR_READS * SECTOR_LEN);
         memset(scratch.aligned_scratch, 0, 256 * sizeof(float));
         memset(scratch.coord_scratch, 0, coord_alloc_size);
         memset(scratch.aligned_query_T, 0, this->aligned_dim * sizeof(T));
         memset(scratch.aligned_query_float, 0,
                this->aligned_dim * sizeof(float));
-
+               
+        // 创建线程专用的数据结构 ThreadData，并将 ctx 和 scratch 缓冲区保存进去
         ThreadData<T> data;
         data.ctx = ctx;
         data.scratch = scratch;
+
+        // 将线程的数据结构放入线程数据的队列中
         this->thread_data.push(data);
+        // 也保存到备份缓冲区中
         this->thread_data_backing_buf.push_back(data);
       }
     }
+    // 设置标志位，表示加载完成
     load_flag = true;
   }
 
@@ -367,7 +393,15 @@ namespace diskann {
 
     diskann::aligned_free(samples);
   }
-
+  /**
+   * 使用广度优先搜索（BFS）缓存索引中的指定数量的节点。该缓存过程从索引中的中心点（medoids）开始，
+   * 逐层扩展到更多的节点，直到达到所需的缓存节点数或索引中的节点已被完全遍历
+   * 1.限制缓存节点数：确保缓存节点数量不会超过索引节点的10%。
+   * 2.借用线程数据：为并发操作准备上下文数据。
+   * 3.BFS扩展：从medoids（中心点）开始，逐层扩展节点并缓存。
+   * 4.随机打乱节点：在每层扩展后，对待扩展节点进行随机打乱。
+   * 5.缓存到达上限：一旦缓存的节点数达到指定上限，停止扩展并结束操作。
+  */
   template<typename T, typename TagT>
   void PQFlashIndex<T, TagT>::cache_bfs_levels(
       _u64 num_nodes_to_cache, std::vector<uint32_t> &node_list) {
@@ -831,7 +865,18 @@ namespace diskann {
     return waitsRemaining;
   }
 #endif
-
+  /**
+   * 执行beam search并返回，返回查询向量最相似的 k_search 个向量，同时计算每个向量的距离
+   * query:查询向量
+   * k_search: knn
+   * l_search: 搜索列表长度上限
+   * beam_width: 束搜索宽度
+   * 返回结果:
+   * res_tags: 结果tag
+   * distances: 结果距离
+   * res_vectors: 结果原始向量
+   * stats: 统计信息
+  */
   template<typename T, typename TagT>
   size_t PQFlashIndex<T, TagT>::cached_beam_search_vectors(
       const T *query, const _u64 k_search, const _u64 l_search, TagT *res_tags,
@@ -868,7 +913,9 @@ namespace diskann {
     }
     return res_count;
   }
-
+  /**
+   * 类似于cached_beam_search_vectors，但它只返回节点的标签和距离，而不返回向量
+  */
   template<typename T, typename TagT>
   size_t PQFlashIndex<T, TagT>::cached_beam_search(
       const T *query, const _u64 k_search, const _u64 l_search, TagT *res_tags,
@@ -876,7 +923,7 @@ namespace diskann {
     // iterate to fixed point
     std::vector<Neighbor> expanded_nodes_info;
     expanded_nodes_info.reserve(2 * l_search);
-    tsl::robin_map<uint32_t, T *> coord_map;
+    tsl::robin_map<uint32_t, T *> coord_map; // TODO: 这里实际上不需要传coord_map
 
     this->disk_iterate_to_fixed_point(query, (_u32) l_search, (_u32) beam_width,
                                       expanded_nodes_info, &coord_map, stats);
@@ -897,7 +944,9 @@ namespace diskann {
     }
     return res_count;
   }
-
+  /**
+   * 类似于cached_beam_search_vectors，返回节点的 ID 和距离，而不是向量或标签
+  */
   template<typename T, typename TagT>
   size_t PQFlashIndex<T, TagT>::cached_beam_search_ids(
       const T *query, const _u64 k_search, const _u64 l_search,
@@ -927,7 +976,19 @@ namespace diskann {
 
     return res_count;
   }
-
+  /**
+   * query1: 查询向量
+   * l_search: 搜索列表的长度L
+   * beam_width: 搜索时，并行处理的宽度
+   * expanded_nodes_info: 存储所有被拓展过的结点
+   * coord_map: 缓存每个节点的坐标，用于加速搜索
+   * stats: 统计信息
+   * passthrough_data: 用于线程间传递数据
+   * exclude_nodes: 要排除的节点集合，不参与搜索
+   * --------------------------------------------
+   * Question1: 拓展时优先缓存命中的是否合适？
+   * Question2: 如果优先缓存命中的，能否采取异步（一边读磁盘，一边拓展缓存命中的）？
+  */
   template<typename T, typename TagT>
   void PQFlashIndex<T, TagT>::disk_iterate_to_fixed_point(
       const T *query1, const uint32_t l_search, const uint32_t beam_width,
@@ -937,17 +998,22 @@ namespace diskann {
       tsl::robin_set<uint32_t> *exclude_nodes) {
     // only pull from sector scratch if ThreadData<T> not passed as arg
 
+    // 线程数据处理
     ThreadData<T> data;
+    // 如果 passthrough_data 为空，函数从线程队列中弹出一个线程数据对象，并确保其有足够的 scratch 空间
     if (passthrough_data == nullptr) {
       data = this->thread_data.pop();
       while (data.scratch.sector_scratch == nullptr) {
         this->thread_data.wait_for_push_notify();
         data = this->thread_data.pop();
       }
-    } else {
+    } else { // 如果传递了 passthrough_data，则直接使用
       data = *passthrough_data;
     }
-
+    /**
+     * 如果数据被归一化，首先将查询向量 query1 归一化，
+     * 最终将归一化后的向量存储在 aligned_query_float 和 aligned_query_T 中
+    */
     if (data_is_normalized) {
       // Data has been normalized. Normalize search vector too.
       float norm = diskann::compute_l2_norm(query1, this->data_dim);
@@ -986,6 +1052,7 @@ namespace diskann {
     char *sector_scratch = query_scratch->sector_scratch;
     _u64 &sector_scratch_idx = query_scratch->sector_idx;
 
+    // 调用 PQ 表的方法 populate_chunk_distances，计算查询向量与 PQ 块中心的距离
     // query <-> PQ chunk centers distances
     float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
     pq_table.populate_chunk_distances(query, pq_dists);
@@ -995,6 +1062,7 @@ namespace diskann {
     _u8 *  pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
 
     // lambda to batch compute query<-> node distances in PQ space
+    // lambda函数用于计算PQ空间中查询点与节点之间的距离
     auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
                                                             const _u64 n_ids,
                                                             float *dists_out) {
@@ -1015,6 +1083,7 @@ namespace diskann {
     _u32                        best_medoid = 0;
     float                       best_dist = (std::numeric_limits<float>::max)();
     std::vector<SimpleNeighbor> medoid_dists;
+    // 遍历所有 medoid，找到与查询向量距离最短的 medoid 作为入口点
     for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
       float cur_expanded_dist = dist_cmp_float->compare(
           query_float, centroid_data + aligned_dim * cur_m,
@@ -1032,13 +1101,15 @@ namespace diskann {
     visited.insert(best_medoid);
 
     unsigned cur_list_size = 1;
-
+    /* 按照距离去对搜索列表排序，距离目标向量近的靠前
+     * 此后，搜索列表一直将是有序的，后续再向搜索列表插入数据采取的是插入排序的策略
+     */
     std::sort(retset.begin(), retset.begin() + cur_list_size);
 
-    unsigned cmps = 0;
-    unsigned hops = 0;
-    unsigned num_ios = 0;
-    unsigned k = 0;
+    unsigned cmps = 0; // 记录比较次数（访问了的邻居的数量）
+    unsigned hops = 0; // 记录跳跃次数（拓展了的点的数量)
+    unsigned num_ios = 0; // 记录IO操作数
+    unsigned k = 0; // 当前处理的节点下标（不是节点ID，是节点在搜索列表中的下标）
 
     // cleared every iteration
     std::vector<unsigned>                    frontier;
@@ -1057,6 +1128,12 @@ namespace diskann {
       sector_scratch_idx = 0;
       // find new beam
       // WAS: _u64 marker = k - 1;
+      /**
+       * 遍历候选节点 retset，将这些节点分成缓存命中的节点和需要从磁盘读取的节点：
+       * 如果节点的邻居信息已经缓存，加入 cached_nhoods 以便直接处理；
+       * 否则加入 frontier，表示后续需要从磁盘读取该节点的邻居信息。
+       * 该过程受束宽 beam_width 限制，确保一次迭代处理的节点数量不会超过限制
+      */
       _u32 marker = k;
       _u32 num_seen = 0;
       while (marker < cur_list_size && frontier.size() < beam_width &&
@@ -1082,11 +1159,14 @@ namespace diskann {
         }
         marker++;
       }
-
+      /**
+       * 从磁盘读取不在缓存中的节点邻居信息
+       * 读取完成后，邻居信息会被存储在指定的内存区域（sector_scratch中）
+      */
       // read nhoods of frontier ids
       if (!frontier.empty()) {
         if (stats != nullptr)
-          stats->n_hops++;
+          stats->n_hops++; // 记录拓展的次数
         for (_u64 i = 0; i < frontier.size(); i++) {
           auto                    id = frontier[i];
           std::pair<_u32, char *> fnhood;
@@ -1098,10 +1178,10 @@ namespace diskann {
               NODE_SECTOR_NO(((size_t) id)) * SECTOR_LEN, SECTOR_LEN,
               fnhood.second);
           if (stats != nullptr) {
-            stats->n_4k++;
-            stats->n_ios++;
+            stats->n_4k++; // 读取4k块的次数
+            stats->n_ios++; // I/O操作总数
           }
-          num_ios++;
+          num_ios++; // 记录I/O次数
         }
         io_timer.reset();
 #ifdef USE_BING_INFRA
@@ -1109,21 +1189,29 @@ namespace diskann {
 #else
         reader->read(frontier_read_reqs, ctx, false);  // synchronous IO linux
 #endif
-        if (stats != nullptr) {
+        if (stats != nullptr) { // 记录这次IO的时间
           stats->io_us += (double) io_timer.elapsed();
         }
       }
 
       // process cached nhoods
       for (auto &cached_nhood : cached_nhoods) {
+
+        // 从全局缓存中找到当前节点的坐标
         auto global_cache_iter = coord_cache.find(cached_nhood.first);
         T *  node_fp_coords = global_cache_iter->second;
         T *  node_fp_coords_copy = data_buf + (data_buf_idx * aligned_dim);
         data_buf_idx++;
+
+        // 将缓存中的节点坐标复制到临时缓冲区中
         memcpy(node_fp_coords_copy, node_fp_coords, data_dim * sizeof(T));
+
+        // 计算当前节点与查询向量的真实距离
         float cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy,
                                                     (unsigned) aligned_dim);
         bool  exclude_cur_node = false;
+
+        // 如果有需要排除的节点集，检查当前节点是否在排除集中
         if (exclude_nodes != nullptr) {
           exclude_cur_node =
               (exclude_nodes->find(cached_nhood.first) != exclude_nodes->end());
@@ -1131,18 +1219,21 @@ namespace diskann {
         // only figure in final list if
         if (!exclude_cur_node) {
           // added for StreamingMerger calls
+          // 如果需要记录坐标，则插入到坐标映射中
           if (coord_map != nullptr) {
             coord_map->insert(
                 std::make_pair(cached_nhood.first, node_fp_coords_copy));
           }
+          // 将该节点及其与查询向量的距离加入 full_retset 中
           full_retset.push_back(
               Neighbor((unsigned) cached_nhood.first, cur_expanded_dist, true));
         }
-        _u64      nnbrs = cached_nhood.second.first;
-        unsigned *node_nbrs = cached_nhood.second.second;
+        _u64      nnbrs = cached_nhood.second.first; // 获取当前节点的邻居数量
+        unsigned *node_nbrs = cached_nhood.second.second; // 获取当前节点的邻居节点列表
 
         // compute node_nbrs <-> query dists in PQ space
         cpu_timer.reset();
+        // 计算所有邻居与目标向量的距离并存储在 dist_scratch 中
         compute_dists(node_nbrs, nnbrs, dist_scratch);
         if (stats != nullptr) {
           stats->n_cmps += (double) nnbrs;
@@ -1150,25 +1241,33 @@ namespace diskann {
         }
 
         // process prefetched nhood
+        // 遍历邻居节点并处理每个邻居
         for (_u64 m = 0; m < nnbrs; ++m) {
           unsigned id = node_nbrs[m];
-          if (visited.find(id) != visited.end()) {
+          if (visited.find(id) != visited.end()) { // 如果节点已经访问过，则跳过
             continue;
-          } else {
+          } else { // 未访问
             visited.insert(id);
             cmps++;
             float dist = dist_scratch[m];
             // diskann::cout << "cmp: " << id << ", dist: " << dist <<
             // std::endl; std::cerr << "dist: " << dist << std::endl;
+            // 如果距离大于当前结果集中最差的距离且搜索列表长度达上限，则跳过
             if (dist >= retset[cur_list_size - 1].distance &&
                 (cur_list_size == l_search))
               continue;
+
+            // 将新的邻居插入到结果集中
             Neighbor nn(id, dist, true);
             auto     r = InsertIntoPool(
                 retset.data(), cur_list_size,
                 nn);  // Return position in sorted list where nn inserted.
+
+            // 如果当前搜索列表数量小于l_search，则增加数量
             if (cur_list_size < l_search)
               ++cur_list_size;
+            
+            // 更新当前搜索列表中未进行拓展的点中距离最近的点的下标
             if (r < nk)
               nk = r;  // nk logs the best position in the retset that was
             // updated
@@ -1191,6 +1290,7 @@ namespace diskann {
         auto &frontier_nhood = frontier_nhoods[completedIndex];
         (*ctx.m_pRequestsStatus)[completedIndex] = IOContext::PROCESS_COMPLETE;
 #else
+      // 以下过程类似于上面过程
       for (auto &frontier_nhood : frontier_nhoods) {
 #endif
         char *node_disk_buf =
@@ -1265,7 +1365,7 @@ namespace diskann {
 
       // update best inserted position
       //
-
+      // 更新搜索列表中下一个要进行拓展的点的下标
       if (nk <= k)
         k = nk;  // k is the best position in retset updated in this round.
       else
@@ -1508,22 +1608,34 @@ namespace diskann {
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
   }
-
+  /**
+   * 将原始向量进行PQ压缩，获得PQ码
+  */
   template<typename T, typename TagT>
   std::vector<_u8> PQFlashIndex<T, TagT>::deflate_vector(const T *vec) {
-    std::vector<_u8>   pq_coords(this->n_chunks);
-    std::vector<float> fp_vec(this->data_dim);
+    std::vector<_u8>   pq_coords(this->n_chunks); // 存储压缩后的 PQ 坐标，大小为 n_chunks
+    std::vector<float> fp_vec(this->data_dim); // 临时存储原始向量转换后的 float 类型向量，大小为 data_dim
+
+    // 将输入的 vec 转换为浮点型向量
     for (uint32_t i = 0; i < this->data_dim; i++) {
       fp_vec[i] = (float) vec[i];
     }
+
+    // 调用 PQ 表的压缩函数，将浮点型向量压缩为 PQ 坐标
     this->pq_table.deflate_vec(fp_vec.data(), pq_coords.data());
+
+    // 返回压缩后的 PQ 坐标向量
     return pq_coords;
   }
 
   template<>
   std::vector<_u8> PQFlashIndex<float>::deflate_vector(const float *vec) {
-    std::vector<_u8> pq_coords(this->n_chunks);
+    std::vector<_u8> pq_coords(this->n_chunks); // 存储压缩后的 PQ 坐标，大小为 n_chunks
+
+    // 直接调用 PQ 表的压缩函数进行压缩
     this->pq_table.deflate_vec(vec, pq_coords.data());
+
+    // 返回压缩后的 PQ 坐标向量
     return pq_coords;
   }
 

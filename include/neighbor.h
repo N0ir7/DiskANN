@@ -14,7 +14,8 @@ namespace diskann {
   struct Neighbor {
     unsigned id;
     float    distance;
-    bool     flag;
+    // 在搜索时记录该节点是否被搜索过，以防止重复搜索
+    bool     flag; 
 
     Neighbor() = default;
     Neighbor(unsigned id, float distance, bool f)
@@ -109,7 +110,8 @@ namespace diskann {
   struct SimpleNeighbors {
     std::vector<SimpleNeighbor> pool;
   };
-
+  // InsertIntoPool：将新的近邻(nn)插入到已排序的邻居列表中，保持列表有序。
+  // 返回值为新邻居插入的位置，如果ID已经存在则返回K + 1（表示未插入）。
   static inline unsigned InsertIntoPool(Neighbor *addr, unsigned K,
                                         Neighbor nn) {
     // find the location to insert

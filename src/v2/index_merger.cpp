@@ -231,7 +231,7 @@ namespace diskann {
                                    (_u32) new_nhood.size());
 
     // insert into graph
-    for (auto &delta : this->mem_deltas) {
+    for (auto &delta : this->mem_deltas) { // TODO: 是否没必要？
       delta->insert_vector(offset_id, new_nhood.data(),
                            (_u32) new_nhood.size());
       //delta->inter_insert(offset_id, new_nhood.data(), (_u32) new_nhood.size());
@@ -504,6 +504,7 @@ namespace diskann {
     assert(output_writer.is_open());
     // skip writing header for now
     //    this->output_writer.seekp(SECTOR_LEN, std::ios::beg);
+    // 预留一个 SECTOR_LEN 长度的空间，将来用于写入文件头
     std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(SECTOR_LEN);
     output_writer.write(sector_buf.get(), SECTOR_LEN);
 
@@ -515,6 +516,7 @@ namespace diskann {
     diskann::cout << "Consolidating deletes\n";
 
     while (start_id < this->disk_npts) {
+      // 读取SECTORS_PER_MERGE个扇区的数据
       new_start_id = this->disk_index->merge_read(disk_nodes, start_id,
                                                   SECTORS_PER_MERGE, buf);
 #pragma omp parallel for schedule(dynamic, 128) num_threads(MAX_N_THREADS)
@@ -635,6 +637,8 @@ namespace diskann {
 
     // free buf
     aligned_free((void *) buf);
+    // TODO: 提前free backing_buf?(而不是在process_deletes后free)
+
     assert(deleted_nodes.size() == this->disk_deleted_ids.size());
     assert(this->disk_deleted_nhoods.size() == this->disk_deleted_ids.size());
   }
@@ -643,6 +647,7 @@ namespace diskann {
   void StreamingMerger<T, TagT>::consolidate_deletes(DiskNode<T> &disk_node,
                                                      uint8_t *    scratch) {
     // if node is deleted
+    // 检查节点是否已经删除了，如果已经删除了，则将邻居数设为0
     if (this->is_deleted(disk_node)) {
       disk_node.nnbrs = 0;
       *(disk_node.nbrs - 1) = 0;
@@ -653,7 +658,7 @@ namespace diskann {
 
     assert(disk_node.nnbrs < 512);
 
-
+    // 将该节点的邻居（从 disk_node.nbrs 开始的内存区域）存入 id_nhood 向量
     std::vector<uint32_t> id_nhood(disk_node.nbrs,
                                    disk_node.nbrs + disk_node.nnbrs);
 
@@ -677,7 +682,7 @@ namespace diskann {
     // refs to deleted nodes
     id_nhood.clear();
     id_nhood.reserve(new_edges.size());
-    for (auto &nbr : new_edges) {
+    for (auto &nbr : new_edges) { // TODO: 是否多余?
       // 2nd order deleted edge
       auto iter = this->disk_deleted_ids.find(nbr);
       if (iter != this->disk_deleted_ids.end()) {
@@ -1139,14 +1144,16 @@ namespace diskann {
                                        std::vector<const std::vector<TagT>*> &deleted_tags_vectors,
                                        std::string  &working_folder) {
     // load disk index
-    this->disk_index_out_path = disk_out;
-    this->disk_index_in_path = disk_in;
-    this->TMP_FOLDER = working_folder;
+    this->disk_index_out_path = disk_out; // 输出磁盘索引的路径
+    this->disk_index_in_path = disk_in; // 输入磁盘索引的路径
+    this->TMP_FOLDER = working_folder; // 临时文件存储目录
     std::cout << "Working folder : " << working_folder << std::endl;
     this->temp_disk_index_path = getTempFilePath(working_folder, "temp_disk_index");
     this->temp_pq_coords_path = getTempFilePath(working_folder, "temp_pq_compressed");
     this->temp_tags_path = getTempFilePath(working_folder, "temp_tags");
     std::cout << this->temp_disk_index_path << " , "  << this->temp_pq_coords_path << "  ,  " << this->temp_tags_path << std::endl;
+
+    // 根据是否使用单文件索引，设置最终的索引文件路径
     this->final_index_file =
         this->_single_file_index ? this->disk_index_out_path
                                  : this->disk_index_out_path + "_disk.index";
@@ -1170,40 +1177,59 @@ namespace diskann {
 
     //    std::shared_ptr<AlignedFileReader> reader =
     //    std::make_shared<MemAlignedFileReader>();
+
+    // 创建一个新的 PQFlashIndex 对象，负责磁盘索引的操作
     this->disk_index = new PQFlashIndex<T, TagT>(
         this->dist_metric, reader, this->_single_file_index, true);
     diskann::cout << "Created PQFlashIndex inside index_merger " << std::endl;
 
+    // 加载磁盘索引文件
     diskann::cout << "Loading PQFlashIndex from file: " << disk_in
                   << " into object: " << std::hex << (_u64) &
         (this->disk_index) << std::dec << std::endl;
     this->disk_index->load(disk_in, NUM_INDEX_LOAD_THREADS);
 
+    // 计算要缓存的节点数量，最多缓存 PQ_FLASH_INDEX_MAX_NODES_TO_CACHE 个节点
     uint32_t node_cache_count = 1 + (uint32_t) round(this->disk_index->return_nd() * 0.01);
     node_cache_count = node_cache_count > PQ_FLASH_INDEX_MAX_NODES_TO_CACHE
                            ? PQ_FLASH_INDEX_MAX_NODES_TO_CACHE
                            : node_cache_count;
     std::vector<uint32_t> cache_node_list;
+
+    // 生成要缓存的 BFS 层级节点列表，并加载这些缓存节点
+    // 节点的邻居信息存储到nhood_cache中，并将节点的坐标存储到coord_cache
     this->disk_index->cache_bfs_levels(node_cache_count,
                                        cache_node_list);
     this->disk_index->load_cache_list(cache_node_list);
+
+    // 获取磁盘索引的标签和初始 ID 列表
     this->disk_tags = this->disk_index->get_tags();
     this->init_ids = this->disk_index->get_init_ids();
     this->disk_npts = (_u32) this->disk_index->return_nd();
     this->disk_thread_data = this->disk_index->get_thread_data();
+
+    // 获取 PQ 表的配置
     auto res_pq = this->disk_index->get_pq_config();
     this->pq_data = res_pq.first;
     this->pq_nchunks = res_pq.second;
+
+    // 获取每个扇区的节点数量和最大节点长度
+    // 一般扇区大小是4KB
     this->nnodes_per_sector = (_u32) this->disk_index->nnodes_per_sector;
     this->max_node_len = (_u32) this->disk_index->max_node_len;
+
+    // 计算每个节点的最大度数，并设置搜索范围
     _u32 max_degree =
         (max_node_len - (sizeof(T) * this->ndims)) / sizeof(uint32_t) - 1;
     this->range = max_degree; 
     diskann::cout << "Setting range to: " << this->range << std::endl;
+
+    // 获取磁盘索引的冻结点信息
     this->disk_index_num_frozen = this->disk_index->get_num_frozen_points();
     this->disk_index_frozen_loc = this->disk_index->get_frozen_loc(); 
 
     // create deltas
+    // 创建一个新的 GraphDelta 对象，管理图的增量变化
     this->disk_delta = new GraphDelta(0, this->disk_npts);
     uint64_t base_offset = ROUND_UP(this->disk_npts, INDEX_OFFSET);
 
@@ -1214,6 +1240,8 @@ namespace diskann {
         std::string   ind_path = mem_index_path;
         std::string   data_path = mem_index_path + ".data";
         std::ifstream bin_reader(data_path, std::ios::binary);
+
+        // 读取内存索引数据点和维度数量
         uint32_t      bin_npts, bin_ndims;
         bin_reader.read((char *) &bin_npts, sizeof(uint32_t));
         bin_reader.read((char *) &bin_ndims, sizeof(uint32_t));
@@ -1223,9 +1251,12 @@ namespace diskann {
         diskann::cout << "Detected # pts = " << bin_npts
                       << ", # dims = " << bin_ndims << "\n";
 
+        // 创建一个新的内存索引对象
         auto mem_index = std::make_unique<Index<T, TagT>>(
             this->dist_metric, bin_ndims, bin_npts + 100, true,
             this->_single_file_index, true, false);
+
+        // 加载内存索引的数据
         _u64 n1, n2, n3;
         T *  data_load;
         diskann::load_aligned_bin<T>(data_path, data_load, n1, n2, n3);
@@ -1233,10 +1264,16 @@ namespace diskann {
         assert(npts < MAX_PTS_PER_MEM_INDEX);
         this->mem_npts.push_back(npts);
         this->mem_data.push_back(data_load);
+
+        // 计算内存索引的偏移量，并更新基准偏移量
         uint32_t index_offset = (_u32) base_offset;
         base_offset += INDEX_OFFSET;
         this->offset_ids.push_back(index_offset);
+
+        // 创建并添加 GraphDelta 对象，用于管理内存索引的增量变化
         this->mem_deltas.push_back(new GraphDelta(index_offset, npts));
+
+        // 加载删除集合（如果存在）
         tsl::robin_set<uint32_t> temp_del_set;
         if(file_exists(mem_index_path + ".del"))
         {
@@ -1244,8 +1281,10 @@ namespace diskann {
             mem_index->get_delete_set(temp_del_set);
         }
         this->mem_deleted_ids.push_back(temp_del_set);
+
+        // 加载标签数据
         mem_index->load_tags(mem_index_path + ".tags");
-        // manage tags
+        // 管理标签数据，将标签复制到内存中
         std::unique_ptr<TagT[]> index_tags;
         index_tags.reset(new TagT[npts]);
 
@@ -1254,9 +1293,9 @@ namespace diskann {
         for (uint32_t k = 0; k < npts; k++) {
           auto iter = loc_tag_map.find(k);
           if (iter == loc_tag_map.end()) {
-            index_tags[k] = (TagT) 0;
+            index_tags[k] = (TagT) 0; // 如果找不到标签，设置为0
           } else {
-            index_tags[k] = iter->second;
+            index_tags[k] = iter->second; // 否则，设置为找到的标签
           }
         }
         this->mem_tags.push_back(std::move(index_tags));
@@ -1321,7 +1360,7 @@ namespace diskann {
 #ifdef USE_TCMALLOC
     MallocExtension::instance()->ReleaseFreeMemory();
 #endif
-
+    // 处理删除标签向量，生成后续删除标签集合
     for (size_t j = 0; j < deleted_tags_vectors.size(); j++) {
       this->latter_deleted_tags.push_back(tsl::robin_set<TagT>());
       for (size_t i = j+1; i < deleted_tags_vectors.size(); i++) {
@@ -1330,7 +1369,7 @@ namespace diskann {
         }
       }
     }
-
+    // 将所有删除标签插入到一个全局的删除标签集合中
     //TODO: See if this can be included in the previous loop
     for (auto &deleted_tags_vector : deleted_tags_vectors) {
       for (size_t i = 0; i < deleted_tags_vector->size(); i++) {
@@ -1338,6 +1377,7 @@ namespace diskann {
       }
     }
 
+    // 分配每个线程的 scratch 空间，用于并行处理
     diskann::cout << "Allocating thread scratch space -- "
                   << PER_THREAD_BUF_SIZE / (1 << 20) << " MB / thread.\n";
     alloc_aligned((void **) &this->thread_pq_scratch,
@@ -1347,27 +1387,37 @@ namespace diskann {
       this->thread_bufs[i] = this->thread_pq_scratch + i * PER_THREAD_BUF_SIZE;
     }
 
+    // 执行实际的合并操作
     mergeImpl();
   }
 
   template<typename T, typename TagT>
   void StreamingMerger<T, TagT>::mergeImpl() {
+    // 这部分确保在继续操作之前所有删除操作都被正确处理
+
+    // 第一步：填充被删除的ID和相关邻居信息
     // populate deleted IDs
-    this->compute_deleted_ids();
+    this->compute_deleted_ids(); // 计算需要删除的点的ID
     // BEGIN -- graph on disk has deleted references, maybe some holes
     // populate deleted nodes
-    this->populate_deleted_nhoods();
+    this->populate_deleted_nhoods(); // 收集所有被删除的点及其邻居节点
     // process all deletes
-    this->process_deletes();
+    this->process_deletes(); // 处理所有删除操作
     // END -- graph on disk has NO deleted references, maybe some holes
+    // 到这一步，磁盘上的图仍然有一些被删除的引用，但可能有些空洞（缺失点）
 
     diskann::cout << "Computing rename-map.\n";
+
+    // 第二步：计算重命名映射
     // compute rename map
+    // 该映射将删除操作后的点重新编号
     this->compute_rename_map();
 
     // get max ID + 1 in rename-map as new max pts
+    // 获取重命名映射中的最大ID，并作为新的最大点数
     uint32_t new_max_pts = this->disk_npts - 1;
     // alternative using list
+    // 使用点列表中的最大ID更新 new_max_pts
     new_max_pts = std::max(this->inverse_list.back().first, new_max_pts);
     new_max_pts = new_max_pts + 1;
 
@@ -1395,9 +1445,12 @@ namespace diskann {
     // write outdated PQ data into pq writer with intentionally wrong header -
     // all these updates are made to a separate file, to be merged later into
     // thw index file if instructed
+    // 打开文件以写入新的 PQ 坐标，文件将被清空并准备新的数据
     std::fstream pq_writer(this->temp_pq_coords_path,
                            std::ios::out | std::ios::binary | std::ios::trunc);
     assert(pq_writer.is_open());
+
+     // 计算PQ文件的大小，并通过跳转来提前分配文件空间
     uint64_t pq_file_size =
         ((uint64_t) new_max_pts * (uint64_t) this->pq_nchunks) +
         (2 * sizeof(uint32_t));
@@ -1408,19 +1461,23 @@ namespace diskann {
     pq_writer.write((char *) (&dummy), sizeof(uint64_t));
 
     // write PQ compressed coords bin and close file
+    // 写入新的 PQ 坐标的头部信息（点数和维度）
     pq_writer.seekp(0, std::ios::beg);
     uint32_t npts_u32 = new_max_pts, ndims_u32 = this->pq_nchunks;
     pq_writer.write((char *) &npts_u32, sizeof(uint32_t));
     pq_writer.write((char *) &ndims_u32, sizeof(uint32_t));
+    // 写入现有的 PQ 数据
     pq_writer.write((char *) this->pq_data,
                     (uint64_t) this->disk_npts * (uint64_t) ndims_u32);
     pq_writer.close();
 
     // write out tags
     //const std::string tag_file = new_disk_out + ".tags";
+     // 写入标签文件
     this->write_tag_file(this->temp_tags_path, new_max_pts);
 
     // switch index to read-only mode
+    // 第四步：切换索引为只读模式，并重新加载更新后的索引
     this->disk_index->reload_index(this->temp_disk_index_path,
                                    this->temp_pq_coords_path,
                                    this->temp_tags_path);
@@ -1429,6 +1486,7 @@ namespace diskann {
 #endif
 
     // re-acquire pointers
+    // 重新获取 PQ 数据和重新计算的点数
     auto res = this->disk_index->get_pq_config();
     this->pq_nchunks = res.second;
     this->pq_data = res.first;
@@ -1442,6 +1500,7 @@ namespace diskann {
               << " Frozen point id: " << this->init_ids[0] << std::endl;
 
     // call inserts
+    // 第五步：处理插入操作，并更新PQ数据
     this->process_inserts();
 #ifdef USE_TCMALLOC
     MallocExtension::instance()->ReleaseFreeMemory();
@@ -1451,7 +1510,7 @@ namespace diskann {
 #ifdef USE_TCMALLOC
     MallocExtension::instance()->ReleaseFreeMemory();
 #endif
-
+    // 重新打开 PQ 文件，并将所有新的 PQ 数据写入磁盘
     diskann::cout << "Dumping full compressed PQ vectors from memory.\n";
     // re-open PQ writer
     pq_writer.open(this->temp_pq_coords_path,
@@ -1462,7 +1521,9 @@ namespace diskann {
                     ((uint64_t) new_max_pts * (uint64_t) this->pq_nchunks));
     pq_writer.close();
     // END -- PQ data on disk consistent and in correct order
+    // 到此，磁盘上的 PQ 数据已经更新并且顺序正确
 
+    // 第六步：批量重命名边，以便在合并期间更容易访问
     // batch rename all inserted edges in each delta
     diskann::cout << "Renaming edges for easier access during merge.\n";
     // const std::function<uint32_t(uint32_t)> rename_func =
@@ -1479,14 +1540,14 @@ namespace diskann {
     // BEGIN -- graph on disk has NO deleted references, NO newly inserted
     // points
     
-    
+    // 第七步：合并操作
     this->process_merges();
     // END -- graph on disk has NO deleted references, has newly inserted points
 
     /* copy output from temp_file -> new_disk_out */
     // reset temp_file ptr
     //this->output_writer.close();
-
+    // 第八步：将合并后的结果保存到磁盘
     auto copy_file = [](const std::string &src, const std::string &dest) {
       diskann::cout << "COPY :: " << src << " --> " << dest << "\n";
       std::ofstream dest_writer(dest, std::ios::binary);
@@ -1626,7 +1687,7 @@ namespace diskann {
       copy_file(this->temp_tags_path, this->final_tags_file);
 
     }
-
+    // 销毁 PQ Flash 索引，释放内存
     // destruct PQFlashIndex
     delete this->disk_index;
     this->disk_index = nullptr;
