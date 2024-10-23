@@ -62,7 +62,7 @@ else()
 endif()
 
 add_definitions(-DMKL_ILP64)
-include_directories(include ${INTEL_ROOT}/include ${MKL_ROOT}/include ${BOOST_ROOT})
+include_directories(include /usr/include/mkl ${INTEL_ROOT}/include ${MKL_ROOT}/include ${BOOST_ROOT})
 
 
 #Main compiler/linker settings 

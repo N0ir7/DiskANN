@@ -202,7 +202,12 @@ namespace diskann {
     DISKANN_DLLEXPORT _u64 get_frozen_loc() {
       return this->frozen_location;
     }
-
+    DISKANN_DLLEXPORT _u64 get_dim() {
+      return this->data_dim;
+    }
+    DISKANN_DLLEXPORT _u64 get_aligned_dim() {
+      return this->aligned_dim;
+    }
     DISKANN_DLLEXPORT void get_active_tags(tsl::robin_set<TagT> &active_tags);
 
     DISKANN_DLLEXPORT int get_vector_by_tag(const TagT &tag, T *vector);
