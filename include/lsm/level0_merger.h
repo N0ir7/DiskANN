@@ -1,23 +1,11 @@
 #pragma once
 
-#include "v2/graph_delta.h"
-#include "tsl/robin_map.h"
-#include "tsl/robin_set.h"
-#include "pq_flash_index.h"
-#include "linux_aligned_file_reader.h"
-#include "index.h"
-#include <algorithm>
-#include <atomic>
-#include <mutex>
-#include <thread>
-#include <vector>
-#include <level_merger.h>
-#include "windows_customizations.h"
+#include "lsm/level_merger.h"
 
 namespace lsmidx {
 
 template<typename T, typename TagT = uint32_t>
-class Level0Merger : public LevelMerger {
+class Level0Merger : public LevelMerger<T, TagT> {
   public:
     /**
      * constructor to read a constructed index, allocated IDs
@@ -124,8 +112,8 @@ class Level0Merger : public LevelMerger {
     std::vector<std::pair<uint32_t, uint32_t>> inverse_list;
 
     // disk index
-    GraphDelta *           disk_delta;
-    PQFlashIndex<T, TagT> *disk_index;
+    diskann::GraphDelta *           disk_delta;
+    diskann::PQFlashIndex<T, TagT> *disk_index;
     std::vector<uint32_t>  init_ids;
     uint8_t *              pq_data = nullptr;
     TagT *                 disk_tags = nullptr;
@@ -135,7 +123,7 @@ class Level0Merger : public LevelMerger {
     std::string  temp_disk_index_path, temp_pq_coords_path, temp_tags_path;
     std::string  final_index_file, final_pq_coords_file, final_tags_file;
     //std::fstream output_writer;
-    std::vector<ThreadData<T>> disk_thread_data;
+    std::vector<diskann::ThreadData<T>> disk_thread_data;
 
     // mem-index
     std::vector<diskann::GraphDelta *>                               mem_deltas;
@@ -143,7 +131,7 @@ class Level0Merger : public LevelMerger {
     std::vector<std::unique_ptr<TagT[]>>                    mem_tags;
     std::vector<uint32_t>                                   offset_ids;
     std::vector<uint32_t>                                   mem_npts;
-    Distance<T> *                                           dist_cmp;
+    diskann::Distance<T> *                                           dist_cmp;
     diskann::Metric                                         dist_metric;
     std::vector<tsl::robin_set<TagT>>                       latter_deleted_tags;
 

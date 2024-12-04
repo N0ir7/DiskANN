@@ -15,7 +15,7 @@ namespace diskann {
     unsigned id;
     float    distance;
     // 在搜索时记录该节点是否被搜索过，以防止重复搜索
-    bool     flag; 
+    bool flag;
 
     Neighbor() = default;
     Neighbor(unsigned id, float distance, bool f)

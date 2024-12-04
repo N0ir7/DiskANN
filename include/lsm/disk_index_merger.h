@@ -11,9 +11,10 @@
 #include <mutex>
 #include <thread>
 #include <vector>
-#include <level_merger.h>
+#include "lsm/level_merger.h"
 #include "windows_customizations.h"
 #include "lsm/index_data_iterator.h"
+#include "lsm/options.h"
 
 namespace lsmidx
 {
@@ -32,7 +33,7 @@ class DiskIndexMerger{
     DiskIndexFileMeta meta;
     tsl::robin_set<unsigned> delete_local_id_set;
     tsl::robin_set<uint32_t>  free_local_ids;
-    diskann::PQFlashIndex<T, TagT> * index;
+    std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index;
     diskann::GraphDelta * delta;
     diskann::Metric dist_metric;
     diskann::Distance<T> * dist_cmp;
@@ -55,6 +56,10 @@ class DiskIndexMerger{
                         tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods,
                         std::vector<uint8_t *>& thread_bufs);
     
+    void ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list);
+
+    void ProcessPatch(DiskIndexFileMeta& final_index_file_meta, std::vector<uint8_t *>& thread_bufs);
+
     void OffsetIterateToFixedPoint(const T *vec, const uint32_t Lsize,
                                   std::vector<diskann::Neighbor> & expanded_nodes_info,
                                   tsl::robin_map<uint32_t, T *> &coord_map,
@@ -152,6 +157,7 @@ class DiskIndexMerger{
                                             const tsl::robin_map<uint32_t, T *> &coord_map,
                                             std::vector<diskann::Neighbor> &result, 
                                             std::vector<float> &occlude_factor);
+    void WriteDataFileHeaderAfterDeletePhase(std::string data_path,tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods);
 };
 
 } // namespace lsmidx

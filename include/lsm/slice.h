@@ -1,27 +1,28 @@
 #pragma once
+
 #include <string>
 
 namespace lsmidx
 {
-template<typename T, typename TagT = uint32_t>
-class Slice {
+template<typename T>
+class VecSlice {
  public:
   // Create an empty slice.
-  Slice() : data_(nullptr), dims_(0) {}
+  VecSlice() : data_(nullptr), dims_(0) {}
 
   // Create a slice that refers to d[0,n-1].
-  Slice(const T* d, size_t n) : data_(d), dims_(n) {}
+  VecSlice(const T* d, size_t n) : data_(d), dims_(n) {}
 
   // Create a slice that refers to the contents of "s"
-  Slice(const std::vector<T>& s) : data_(s.data()), size_(s.size()) {}
+  VecSlice(const std::vector<T>& s) : data_(s.data()), dims_(s.size()) {}
 
   // Intentionally copyable.
-  Slice(const Slice&) = default;
-  Slice& operator=(const Slice&) = default;
+  VecSlice(const VecSlice&) = default;
+  VecSlice& operator=(const VecSlice&) = default;
 
   // Return a pointer to the beginning of the referenced data
   const T* data() const { return data_; }
-  const TagT* tag() const { return tag_; }
+
   // Return the length (in bytes) of the referenced data
   size_t size() const { return dims_* sizeof(T); }
 
@@ -41,12 +42,33 @@ class Slice {
     dims_ = 0;
   }
 
-  // Drop the first "n" bytes from this slice.
-  // void remove_prefix(size_t n) {
-  //   assert(n <= size());
-  //   data_ += n;
-  //   size_ -= n;
-  // }
+  // Return a string that contains the copy of the referenced data.
+  // std::string ToString() const { return std::string(data_, size_); }
+
+  // Three-way comparison.  Returns value:
+  //   <  0 iff "*this" <  "b",
+  //   == 0 iff "*this" == "b",
+  //   >  0 iff "*this" >  "b"
+  int compare(const VecSlice<T>& b) const;
+
+ private:
+  const T* data_;
+  size_t dims_;
+};
+
+template<typename T>
+class TagSlice {
+ public:
+
+  // Create a slice that refers to d[0,n-1].
+  TagSlice(const T* tag) : tag_(tag){}
+
+  // Intentionally copyable.
+  TagSlice(const TagSlice&) = default;
+  TagSlice& operator=(const TagSlice&) = default;
+
+  // Return a pointer to the beginning of the referenced data
+  const T tag() const { return tag_; }
 
   // Return a string that contains the copy of the referenced data.
   // std::string ToString() const { return std::string(data_, size_); }
@@ -55,11 +77,9 @@ class Slice {
   //   <  0 iff "*this" <  "b",
   //   == 0 iff "*this" == "b",
   //   >  0 iff "*this" >  "b"
-  int compare(const Slice& b) const;
+  int compare(const TagSlice<T>& b) const;
 
  private:
-  const T* data_;
-  const TagT tag_;
-  size_t dims_;
+  const T tag_;
 };
 } // namespace lsmidx

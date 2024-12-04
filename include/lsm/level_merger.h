@@ -18,7 +18,7 @@ namespace lsmidx {
 template<typename T, typename TagT = uint32_t>
 class LevelMerger{
 public:
-  void merge(const char * dist_disk_index_path,
+  virtual void merge(const char * dist_disk_index_path,
                 const std::vector<std::string> &src_index_paths,
                 const char *                    out_disk_index_path,
                 std::vector<const std::vector<TagT>*> &deleted_tags,

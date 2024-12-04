@@ -41,7 +41,7 @@
 #define READ_UNSIGNED(stream, val) stream.read((char *) &val, sizeof(unsigned))
 
 // sector # on disk where node_id is present
-#define NODE_SECTOR_NO(node_id) (((_u64)(node_id)) / nnodes_per_sector + 1)
+#define NODE_SECTOR_NO(node_id) (((_u64) (node_id)) / nnodes_per_sector + 1)
 
 // obtains region of sector containing node
 #define OFFSET_TO_NODE(sector_buf, node_id) \
@@ -181,7 +181,7 @@ namespace diskann {
       {
         // 为每个线程注册 I/O 上下文
         this->reader->register_thread();
-        IOContext &     ctx = this->reader->get_ctx();
+        IOContext &ctx = this->reader->get_ctx();
         // 创建 QueryScratch 对象，用于存储查询相关的临时数据
         QueryScratch<T> scratch;
 
@@ -190,7 +190,8 @@ namespace diskann {
         diskann::alloc_aligned((void **) &scratch.coord_scratch,
                                coord_alloc_size, 256);
 
-        // 分配扇区缓存空间，用于存储从磁盘读取的数据，每个扇区大小为 4KB, 预分配128个扇区大小空间
+        // 分配扇区缓存空间，用于存储从磁盘读取的数据，每个扇区大小为 4KB,
+        // 预分配128个扇区大小空间
         diskann::alloc_aligned((void **) &scratch.sector_scratch,
                                MAX_N_SECTOR_READS * SECTOR_LEN, SECTOR_LEN);
 
@@ -226,7 +227,7 @@ namespace diskann {
         memset(scratch.aligned_query_T, 0, this->aligned_dim * sizeof(T));
         memset(scratch.aligned_query_float, 0,
                this->aligned_dim * sizeof(float));
-               
+
         // 创建线程专用的数据结构 ThreadData，并将 ctx 和 scratch 缓冲区保存进去
         ThreadData<T> data;
         data.ctx = ctx;
@@ -290,7 +291,7 @@ namespace diskann {
       std::vector<std::pair<_u32, char *>> nhoods;
       for (_u64 node_idx = start_idx; node_idx < end_idx; node_idx++) {
         AlignedRead read;
-        char *      buf = nullptr;
+        char       *buf = nullptr;
         alloc_aligned((void **) &buf, SECTOR_LEN, SECTOR_LEN);
         nhoods.push_back(std::make_pair(node_list[node_idx], buf));
         read.len = SECTOR_LEN;
@@ -304,8 +305,8 @@ namespace diskann {
       _u64 node_idx = start_idx;
       for (auto &nhood : nhoods) {
         char *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
-        T *   node_coords = OFFSET_TO_NODE_COORDS(node_buf);
-        T *   cached_coords = coord_cache_buf + node_idx * aligned_dim;
+        T    *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
+        T    *cached_coords = coord_cache_buf + node_idx * aligned_dim;
         memcpy(cached_coords, node_coords, data_dim * sizeof(T));
         coord_cache.insert(std::make_pair(nhood.first, cached_coords));
 
@@ -350,7 +351,7 @@ namespace diskann {
     }
 
     _u64 sample_num, sample_dim, sample_aligned_dim;
-    T *  samples;
+    T   *samples;
 
 #ifdef EXEC_ENV_OLS
     if (files.fileExists(sample_bin)) {
@@ -401,7 +402,7 @@ namespace diskann {
    * 3.BFS扩展：从medoids（中心点）开始，逐层扩展节点并缓存。
    * 4.随机打乱节点：在每层扩展后，对待扩展节点进行随机打乱。
    * 5.缓存到达上限：一旦缓存的节点数达到指定上限，停止扩展并结束操作。
-  */
+   */
   template<typename T, typename TagT>
   void PQFlashIndex<T, TagT>::cache_bfs_levels(
       _u64 num_nodes_to_cache, std::vector<uint32_t> &node_list) {
@@ -412,7 +413,7 @@ namespace diskann {
     node_list.clear();
 
     // Do not cache more than 10% of the nodes in the index
-    _u64 tenp_nodes = (_u64)(std::round(this->num_points * 0.1));
+    _u64 tenp_nodes = (_u64) (std::round(this->num_points * 0.1));
     if (num_nodes_to_cache > tenp_nodes) {
       diskann::cout << "Reducing nodes to cache from: " << num_nodes_to_cache
                     << " to: " << tenp_nodes
@@ -491,7 +492,7 @@ namespace diskann {
         // process each nhood buf
         for (auto &nhood : nhoods) {
           // insert node coord into coord_cache
-          char *    node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
+          char     *node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
           unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
           _u64      nnbrs = (_u64) *node_nhood;
           unsigned *nbrs = node_nhood + 1;
@@ -622,7 +623,7 @@ namespace diskann {
     // this->setup_thread_data(num_threads);
     this->max_nthreads = num_threads;
 
-    char *                   bytes = getHeaderBytes();
+    char                    *bytes = getHeaderBytes();
     ContentBuf               buf(bytes, HEADER_SIZE);
     std::basic_istream<char> index_metadata(&buf);
 
@@ -822,7 +823,7 @@ namespace diskann {
     } else {
       num_medoids = 1;
       medoids = new uint32_t[1];
-      medoids[0] = (_u32)(medoid_id_on_file);
+      medoids[0] = (_u32) (medoid_id_on_file);
       use_medoids_data_as_centroids();
     }
 
@@ -866,17 +867,13 @@ namespace diskann {
   }
 #endif
   /**
-   * 执行beam search并返回，返回查询向量最相似的 k_search 个向量，同时计算每个向量的距离
-   * query:查询向量
-   * k_search: knn
-   * l_search: 搜索列表长度上限
-   * beam_width: 束搜索宽度
-   * 返回结果:
-   * res_tags: 结果tag
+   * 执行beam search并返回，返回查询向量最相似的 k_search
+   * 个向量，同时计算每个向量的距离 query:查询向量 k_search: knn l_search:
+   * 搜索列表长度上限 beam_width: 束搜索宽度 返回结果: res_tags: 结果tag
    * distances: 结果距离
    * res_vectors: 结果原始向量
    * stats: 统计信息
-  */
+   */
   template<typename T, typename TagT>
   size_t PQFlashIndex<T, TagT>::cached_beam_search_vectors(
       const T *query, const _u64 k_search, const _u64 l_search, TagT *res_tags,
@@ -915,7 +912,7 @@ namespace diskann {
   }
   /**
    * 类似于cached_beam_search_vectors，但它只返回节点的标签和距离，而不返回向量
-  */
+   */
   template<typename T, typename TagT>
   size_t PQFlashIndex<T, TagT>::cached_beam_search(
       const T *query, const _u64 k_search, const _u64 l_search, TagT *res_tags,
@@ -923,7 +920,8 @@ namespace diskann {
     // iterate to fixed point
     std::vector<Neighbor> expanded_nodes_info;
     expanded_nodes_info.reserve(2 * l_search);
-    tsl::robin_map<uint32_t, T *> coord_map; // TODO: 这里实际上不需要传coord_map
+    tsl::robin_map<uint32_t, T *>
+        coord_map;  // TODO: 这里实际上不需要传coord_map
 
     this->disk_iterate_to_fixed_point(query, (_u32) l_search, (_u32) beam_width,
                                       expanded_nodes_info, &coord_map, stats);
@@ -946,7 +944,7 @@ namespace diskann {
   }
   /**
    * 类似于cached_beam_search_vectors，返回节点的 ID 和距离，而不是向量或标签
-  */
+   */
   template<typename T, typename TagT>
   size_t PQFlashIndex<T, TagT>::cached_beam_search_ids(
       const T *query, const _u64 k_search, const _u64 l_search,
@@ -987,33 +985,35 @@ namespace diskann {
    * exclude_nodes: 要排除的节点集合，不参与搜索
    * --------------------------------------------
    * Question1: 拓展时优先缓存命中的是否合适？
-   * Question2: 如果优先缓存命中的，能否采取异步（一边读磁盘，一边拓展缓存命中的）？
-  */
+   * Question2:
+   * 如果优先缓存命中的，能否采取异步（一边读磁盘，一边拓展缓存命中的）？
+   */
   template<typename T, typename TagT>
   void PQFlashIndex<T, TagT>::disk_iterate_to_fixed_point(
       const T *query1, const uint32_t l_search, const uint32_t beam_width,
-      std::vector<Neighbor> &        expanded_nodes_info,
+      std::vector<Neighbor>         &expanded_nodes_info,
       tsl::robin_map<uint32_t, T *> *coord_map, QueryStats *stats,
-      ThreadData<T> *           passthrough_data,
+      ThreadData<T>            *passthrough_data,
       tsl::robin_set<uint32_t> *exclude_nodes) {
     // only pull from sector scratch if ThreadData<T> not passed as arg
 
     // 线程数据处理
     ThreadData<T> data;
-    // 如果 passthrough_data 为空，函数从线程队列中弹出一个线程数据对象，并确保其有足够的 scratch 空间
+    // 如果 passthrough_data
+    // 为空，函数从线程队列中弹出一个线程数据对象，并确保其有足够的 scratch 空间
     if (passthrough_data == nullptr) {
       data = this->thread_data.pop();
       while (data.scratch.sector_scratch == nullptr) {
         this->thread_data.wait_for_push_notify();
         data = this->thread_data.pop();
       }
-    } else { // 如果传递了 passthrough_data，则直接使用
+    } else {  // 如果传递了 passthrough_data，则直接使用
       data = *passthrough_data;
     }
     /**
      * 如果数据被归一化，首先将查询向量 query1 归一化，
      * 最终将归一化后的向量存储在 aligned_query_float 和 aligned_query_T 中
-    */
+     */
     if (data_is_normalized) {
       // Data has been normalized. Normalize search vector too.
       float norm = diskann::compute_l2_norm(query1, this->data_dim);
@@ -1030,7 +1030,7 @@ namespace diskann {
       }
       memcpy(data.scratch.aligned_query_T, query1, this->data_dim * sizeof(T));
     }
-    const T *    query = data.scratch.aligned_query_T;
+    const T     *query = data.scratch.aligned_query_T;
     const float *query_float = data.scratch.aligned_query_float;
 
     IOContext &ctx = data.ctx;
@@ -1044,7 +1044,7 @@ namespace diskann {
     _mm_prefetch((char *) scratch, _MM_HINT_T0);
 
     // pointers to buffers for data
-    T *   data_buf = query_scratch->coord_scratch;
+    T    *data_buf = query_scratch->coord_scratch;
     _u64 &data_buf_idx = query_scratch->coord_idx;
     _mm_prefetch((char *) data_buf, _MM_HINT_T1);
 
@@ -1059,7 +1059,7 @@ namespace diskann {
 
     // query <-> neighbor list
     float *dist_scratch = query_scratch->aligned_dist_scratch;
-    _u8 *  pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
+    _u8   *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
 
     // lambda to batch compute query<-> node distances in PQ space
     // lambda函数用于计算PQ空间中查询点与节点之间的距离
@@ -1106,10 +1106,11 @@ namespace diskann {
      */
     std::sort(retset.begin(), retset.begin() + cur_list_size);
 
-    unsigned cmps = 0; // 记录比较次数（访问了的邻居的数量）
-    unsigned hops = 0; // 记录跳跃次数（拓展了的点的数量)
-    unsigned num_ios = 0; // 记录IO操作数
-    unsigned k = 0; // 当前处理的节点下标（不是节点ID，是节点在搜索列表中的下标）
+    unsigned cmps = 0;  // 记录比较次数（访问了的邻居的数量）
+    unsigned hops = 0;  // 记录跳跃次数（拓展了的点的数量)
+    unsigned num_ios = 0;  // 记录IO操作数
+    unsigned k =
+        0;  // 当前处理的节点下标（不是节点ID，是节点在搜索列表中的下标）
 
     // cleared every iteration
     std::vector<unsigned>                    frontier;
@@ -1129,11 +1130,12 @@ namespace diskann {
       // find new beam
       // WAS: _u64 marker = k - 1;
       /**
-       * 遍历候选节点 retset，将这些节点分成缓存命中的节点和需要从磁盘读取的节点：
+       * 遍历候选节点
+       * retset，将这些节点分成缓存命中的节点和需要从磁盘读取的节点：
        * 如果节点的邻居信息已经缓存，加入 cached_nhoods 以便直接处理；
        * 否则加入 frontier，表示后续需要从磁盘读取该节点的邻居信息。
        * 该过程受束宽 beam_width 限制，确保一次迭代处理的节点数量不会超过限制
-      */
+       */
       _u32 marker = k;
       _u32 num_seen = 0;
       while (marker < cur_list_size && frontier.size() < beam_width &&
@@ -1162,11 +1164,11 @@ namespace diskann {
       /**
        * 从磁盘读取不在缓存中的节点邻居信息
        * 读取完成后，邻居信息会被存储在指定的内存区域（sector_scratch中）
-      */
+       */
       // read nhoods of frontier ids
       if (!frontier.empty()) {
         if (stats != nullptr)
-          stats->n_hops++; // 记录拓展的次数
+          stats->n_hops++;  // 记录拓展的次数
         for (_u64 i = 0; i < frontier.size(); i++) {
           auto                    id = frontier[i];
           std::pair<_u32, char *> fnhood;
@@ -1178,10 +1180,10 @@ namespace diskann {
               NODE_SECTOR_NO(((size_t) id)) * SECTOR_LEN, SECTOR_LEN,
               fnhood.second);
           if (stats != nullptr) {
-            stats->n_4k++; // 读取4k块的次数
-            stats->n_ios++; // I/O操作总数
+            stats->n_4k++;   // 读取4k块的次数
+            stats->n_ios++;  // I/O操作总数
           }
-          num_ios++; // 记录I/O次数
+          num_ios++;  // 记录I/O次数
         }
         io_timer.reset();
 #ifdef USE_BING_INFRA
@@ -1189,18 +1191,17 @@ namespace diskann {
 #else
         reader->read(frontier_read_reqs, ctx, false);  // synchronous IO linux
 #endif
-        if (stats != nullptr) { // 记录这次IO的时间
+        if (stats != nullptr) {  // 记录这次IO的时间
           stats->io_us += (double) io_timer.elapsed();
         }
       }
 
       // process cached nhoods
       for (auto &cached_nhood : cached_nhoods) {
-
         // 从全局缓存中找到当前节点的坐标
         auto global_cache_iter = coord_cache.find(cached_nhood.first);
-        T *  node_fp_coords = global_cache_iter->second;
-        T *  node_fp_coords_copy = data_buf + (data_buf_idx * aligned_dim);
+        T   *node_fp_coords = global_cache_iter->second;
+        T   *node_fp_coords_copy = data_buf + (data_buf_idx * aligned_dim);
         data_buf_idx++;
 
         // 将缓存中的节点坐标复制到临时缓冲区中
@@ -1228,8 +1229,9 @@ namespace diskann {
           full_retset.push_back(
               Neighbor((unsigned) cached_nhood.first, cur_expanded_dist, true));
         }
-        _u64      nnbrs = cached_nhood.second.first; // 获取当前节点的邻居数量
-        unsigned *node_nbrs = cached_nhood.second.second; // 获取当前节点的邻居节点列表
+        _u64 nnbrs = cached_nhood.second.first;  // 获取当前节点的邻居数量
+        unsigned *node_nbrs =
+            cached_nhood.second.second;  // 获取当前节点的邻居节点列表
 
         // compute node_nbrs <-> query dists in PQ space
         cpu_timer.reset();
@@ -1244,9 +1246,10 @@ namespace diskann {
         // 遍历邻居节点并处理每个邻居
         for (_u64 m = 0; m < nnbrs; ++m) {
           unsigned id = node_nbrs[m];
-          if (visited.find(id) != visited.end()) { // 如果节点已经访问过，则跳过
+          if (visited.find(id) !=
+              visited.end()) {  // 如果节点已经访问过，则跳过
             continue;
-          } else { // 未访问
+          } else {  // 未访问
             visited.insert(id);
             cmps++;
             float dist = dist_scratch[m];
@@ -1260,13 +1263,13 @@ namespace diskann {
             // 将新的邻居插入到结果集中
             Neighbor nn(id, dist, true);
             auto     r = InsertIntoPool(
-                retset.data(), cur_list_size,
-                nn);  // Return position in sorted list where nn inserted.
+                    retset.data(), cur_list_size,
+                    nn);  // Return position in sorted list where nn inserted.
 
             // 如果当前搜索列表数量小于l_search，则增加数量
             if (cur_list_size < l_search)
               ++cur_list_size;
-            
+
             // 更新当前搜索列表中未进行拓展的点中距离最近的点的下标
             if (r < nk)
               nk = r;  // nk logs the best position in the retset that was
@@ -1296,8 +1299,8 @@ namespace diskann {
         char *node_disk_buf =
             OFFSET_TO_NODE(frontier_nhood.second, frontier_nhood.first);
         unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
-        _u64      nnbrs = (_u64)(*node_buf);
-        T *       node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
+        _u64      nnbrs = (_u64) (*node_buf);
+        T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
         assert(data_buf_idx < MAX_N_CMPS);
 
         T *node_fp_coords_copy = data_buf + (data_buf_idx * aligned_dim);
@@ -1347,8 +1350,8 @@ namespace diskann {
               continue;
             Neighbor nn(id, dist, true);
             auto     r = InsertIntoPool(
-                retset.data(), cur_list_size,
-                nn);  // Return position in sorted list where nn inserted.
+                    retset.data(), cur_list_size,
+                    nn);  // Return position in sorted list where nn inserted.
             if (cur_list_size < l_search)
               ++cur_list_size;
             if (r < nk)
@@ -1392,7 +1395,7 @@ namespace diskann {
 
   template<typename T, typename TagT>
   void PQFlashIndex<T, TagT>::compute_pq_dists(const T *query, const _u32 *ids,
-                                               float *    fp_dists,
+                                               float     *fp_dists,
                                                const _u32 count) {
     // TODO (perf) :: more efficient impl without using populate_chunk_distances
     ThreadData<T> data = this->thread_data.pop();
@@ -1432,10 +1435,10 @@ namespace diskann {
 
   template<typename T, typename TagT>
   void PQFlashIndex<T, TagT>::compute_pq_dists(const _u32 src, const _u32 *ids,
-                                               float *    fp_dists,
+                                               float     *fp_dists,
                                                const _u32 count,
-                                               uint8_t *  aligned_scratch) {
-    const _u8 *   src_ptr = this->data + (this->n_chunks * src);
+                                               uint8_t   *aligned_scratch) {
+    const _u8    *src_ptr = this->data + (this->n_chunks * src);
     ThreadData<T> data;
     bool          popped = false;
     if (aligned_scratch == nullptr) {
@@ -1466,9 +1469,9 @@ namespace diskann {
 
   template<typename T, typename TagT>
   _u32 PQFlashIndex<T, TagT>::merge_read(std::vector<DiskNode<T>> &disk_nodes,
-                                         _u32 &                    start_id,
+                                         _u32                     &start_id,
                                          const _u32                sector_count,
-                                         char *                    scratch) {
+                                         char                     *scratch) {
     assert(start_id % this->nnodes_per_sector == 0);
     assert(IS_ALIGNED(scratch, SECTOR_LEN));
     disk_nodes.clear();
@@ -1480,7 +1483,7 @@ namespace diskann {
       data = this->thread_data.pop();
     }
 
-    IOContext &              ctx = data.ctx;
+    IOContext               &ctx = data.ctx;
     std::vector<AlignedRead> read_req(1);
     _u64 start_off = NODE_SECTOR_NO(((size_t) start_id)) * SECTOR_LEN;
     _u64 n_sectors = ROUND_UP(this->num_points - start_id, nnodes_per_sector) /
@@ -1540,7 +1543,7 @@ namespace diskann {
     IOContext &ctx = data.ctx;
 
     uint32_t n_scanned = 0;
-    uint32_t base_offset = (uint32_t)(NODE_SECTOR_NO(0) * SECTOR_LEN);
+    uint32_t base_offset = (uint32_t) (NODE_SECTOR_NO(0) * SECTOR_LEN);
     std::vector<AlignedRead> reads(1);
     reads[0].buf = buf;
     reads[0].len = sectors_per_scan * SECTOR_LEN;
@@ -1610,11 +1613,14 @@ namespace diskann {
   }
   /**
    * 将原始向量进行PQ压缩，获得PQ码
-  */
+   */
   template<typename T, typename TagT>
   std::vector<_u8> PQFlashIndex<T, TagT>::deflate_vector(const T *vec) {
-    std::vector<_u8>   pq_coords(this->n_chunks); // 存储压缩后的 PQ 坐标，大小为 n_chunks
-    std::vector<float> fp_vec(this->data_dim); // 临时存储原始向量转换后的 float 类型向量，大小为 data_dim
+    std::vector<_u8> pq_coords(
+        this->n_chunks);  // 存储压缩后的 PQ 坐标，大小为 n_chunks
+    std::vector<float> fp_vec(
+        this->data_dim);  // 临时存储原始向量转换后的 float 类型向量，大小为
+                          // data_dim
 
     // 将输入的 vec 转换为浮点型向量
     for (uint32_t i = 0; i < this->data_dim; i++) {
@@ -1630,7 +1636,8 @@ namespace diskann {
 
   template<>
   std::vector<_u8> PQFlashIndex<float>::deflate_vector(const float *vec) {
-    std::vector<_u8> pq_coords(this->n_chunks); // 存储压缩后的 PQ 坐标，大小为 n_chunks
+    std::vector<_u8> pq_coords(
+        this->n_chunks);  // 存储压缩后的 PQ 坐标，大小为 n_chunks
 
     // 直接调用 PQ 表的压缩函数进行压缩
     this->pq_table.deflate_vec(vec, pq_coords.data());
@@ -1768,7 +1775,7 @@ namespace diskann {
 
   template<typename T, typename TagT>
   int PQFlashIndex<T, TagT>::get_vector_by_tag(const TagT &tag,
-                                               T *         vector_coords) {
+                                               T          *vector_coords) {
     if (!enable_tags) {
       diskann::cout << "Tags are disabled, cannot retrieve vector" << std::endl;
       return -1;
@@ -1805,7 +1812,7 @@ namespace diskann {
   template<typename T, typename TagT>
   char *PQFlashIndex<T, TagT>::getHeaderBytes() {
     this->reader->register_thread();
-    IOContext & ctx = reader->get_ctx();
+    IOContext  &ctx = reader->get_ctx();
     AlignedRead readReq;
     readReq.buf = new char[PQFlashIndex<T>::HEADER_SIZE];
     readReq.len = PQFlashIndex<T>::HEADER_SIZE;

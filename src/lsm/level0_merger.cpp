@@ -20,17 +20,7 @@
 #include <sys/syscall.h>
 #include "logger.h"
 #include "ann_exception.h"
-
-#define SECTORS_PER_MERGE (uint64_t) 65536
-// max number of points per mem index being merged -- 32M
-#define MAX_PTS_PER_MEM_INDEX (uint64_t)(1 << 25)
-#define INDEX_OFFSET (uint64_t)(MAX_PTS_PER_MEM_INDEX * 4)
-#define MAX_INSERT_THREADS (uint64_t) 18
-#define MAX_N_THREADS (uint64_t) 18
-#define NUM_INDEX_LOAD_THREADS (uint64_t) 18
-#define PER_THREAD_BUF_SIZE (uint64_t)(65536 * 64 * 4)
-
-#define PQ_FLASH_INDEX_MAX_NODES_TO_CACHE 200000
+#include "lsm/options.h"
 
 namespace lsmidx {
 template<typename T, typename TagT>
@@ -70,16 +60,16 @@ Level0Merger<T, TagT>::~Level0Merger() {
   for (auto &delta : this->mem_deltas) {
     delete delta;
   }
-  aligned_free((void *) this->thread_pq_scratch);
+  diskann::aligned_free((void *) this->thread_pq_scratch);
   for (auto &data : this->mem_data) {
     //delete[] data;
-    aligned_free((void *)data);
+    diskann::aligned_free((void *)data);
   }
 }
 
 template<typename T, typename TagT>
 void Level0Merger<T, TagT>::process_inserts_pq() {
-  Timer total_insert_timer;
+  diskann::Timer total_insert_timer;
   this->insert_times.resize(MAX_N_THREADS, 0.0);
   this->delta_times.resize(MAX_N_THREADS, 0.0);
   // iterate through each vector in each mem index
@@ -136,7 +126,7 @@ void Level0Merger<T, TagT>::process_inserts_pq() {
 
 template<typename T, typename TagT>
 void Level0Merger<T, TagT>::process_inserts() {
-  Timer total_insert_timer;
+  diskann::Timer total_insert_timer;
   this->insert_times.resize(MAX_INSERT_THREADS, 0.0);
   this->delta_times.resize(MAX_INSERT_THREADS, 0.0);
   // iterate through each vector in each mem index
@@ -200,7 +190,7 @@ void Level0Merger<T, TagT>::process_inserts() {
 template<typename T, typename TagT>
 void Level0Merger<T, TagT>::insert_mem_vec(const T *      mem_vec,
                                               const uint32_t offset_id) {
-  Timer timer;
+  diskann::Timer timer;
   float insert_time, delta_time;
   // START: mem_vec has no ID, no presence in system
   std::vector<diskann::Neighbor>         pool;
@@ -259,12 +249,12 @@ void Level0Merger<T, TagT>::offset_iterate_to_fixed_point(
   // exp_node_id, best_l_nodes, cmap);
   uint32_t       omp_thread_no = omp_get_thread_num();
   if (this->disk_thread_data.size() <= omp_thread_no) {
-    throw ANNException(std::string("Found ") + std::to_string(omp_thread_no) +
+    throw diskann::ANNException(std::string("Found ") + std::to_string(omp_thread_no) +
                             " thread when only " +
                             std::to_string(this->disk_thread_data.size()) + " were expected",
                         -1);
   }
-  ThreadData<T> &thread_data = this->disk_thread_data[omp_thread_no];
+  diskann::ThreadData<T> &thread_data = this->disk_thread_data[omp_thread_no];
   //    ThreadData<T> * thread_data = nullptr;
 
   cmap.reserve(2 * Lsize);
@@ -492,7 +482,7 @@ template<typename T, typename TagT>
 void Level0Merger<T, TagT>::process_deletes() {
   // buf to hold data being read
   char *buf = nullptr;
-  alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
+  diskann::alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
 
   // open output file for writing
   // Was: this->disk_index_out_path + "_disk.index";
@@ -508,7 +498,7 @@ void Level0Merger<T, TagT>::process_deletes() {
   std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(SECTOR_LEN);
   output_writer.write(sector_buf.get(), SECTOR_LEN);
 
-  Timer delete_timer;
+  diskann::Timer delete_timer;
   // batch consolidate deletes
   std::vector<diskann::DiskNode<T>>                                disk_nodes;
   std::vector<std::pair<uint32_t, std::vector<uint32_t>>> id_nhoods;
@@ -592,17 +582,17 @@ void Level0Merger<T, TagT>::process_deletes() {
   diskann::save_bin<_u64>(this->temp_disk_index_path, output_metadata.data(),
                           output_metadata.size(), 1, 0);
   // free buf
-  aligned_free((void *) buf);
+  diskann::aligned_free((void *) buf);
 
   // free backing buf for deletes
-  aligned_free((void *) this->delete_backing_buf);
+  diskann::aligned_free((void *) this->delete_backing_buf);
 }
 
 template<typename T, typename TagT>
 void Level0Merger<T, TagT>::populate_deleted_nhoods() {
   // buf for scratch
   char *buf = nullptr;
-  alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
+  diskann::alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
 
   // scan deleted nodes and get
   std::vector<diskann::DiskNode<T>> deleted_nodes;
@@ -611,7 +601,7 @@ void Level0Merger<T, TagT>::populate_deleted_nhoods() {
   backing_buf_size = ROUND_UP(backing_buf_size, 256);
   diskann::cout << "ALLOC: " << (backing_buf_size << 10)
                 << "KiB aligned buffer for deletes.\n";
-  alloc_aligned((void **) &this->delete_backing_buf, backing_buf_size, 256);
+  diskann::alloc_aligned((void **) &this->delete_backing_buf, backing_buf_size, 256);
   memset(this->delete_backing_buf, 0, backing_buf_size);
   this->disk_index->scan_deleted_nodes(this->disk_deleted_ids, deleted_nodes,
                                         buf, this->delete_backing_buf,
@@ -636,7 +626,7 @@ void Level0Merger<T, TagT>::populate_deleted_nhoods() {
   }
 
   // free buf
-  aligned_free((void *) buf);
+  diskann::aligned_free((void *) buf);
   // TODO: 提前free backing_buf?(而不是在process_deletes后free)
 
   assert(deleted_nodes.size() == this->disk_deleted_ids.size());
@@ -938,7 +928,7 @@ void Level0Merger<T, TagT>::write_tag_file(
   TagT *cur_tags;
 
   size_t allocSize = npts * sizeof(TagT);
-  alloc_aligned(((void **) &cur_tags), allocSize, 8 * sizeof(TagT));
+  diskann::alloc_aligned(((void **) &cur_tags), allocSize, 8 * sizeof(TagT));
 
   //TODO: We must detect holes in a better way. Currently, it is possible
   //that one of the tags will be uint32_t::max() and will fail.
@@ -972,7 +962,7 @@ void Level0Merger<T, TagT>::write_tag_file(
   //TODO: This will work because we are dealing with uint64 at the moment. 
   //If we ever have string tags, this'll fail spectacularly.
   //delete[] cur_tags;
-  aligned_free(cur_tags);
+  diskann::aligned_free(cur_tags);
   // release all tags -- automatically deleted since using `unique_ptr`
   this->mem_tags.clear();
 }
@@ -981,9 +971,9 @@ template<typename T, typename TagT>
 void Level0Merger<T, TagT>::process_merges() {
   // buf to hold data being read
   char *buf = nullptr;
-  alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
+  diskann::alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
 
-  Timer                   merge_timer;
+  diskann::Timer                   merge_timer;
   std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(SECTOR_LEN);
 
   std::ofstream output_writer(this->final_index_file,
@@ -1130,7 +1120,7 @@ void Level0Merger<T, TagT>::process_merges() {
   diskann::save_bin<_u64>(final_index_file, output_metadata.data(),
                           output_metadata.size(), 1, 0);
   // free buf
-  aligned_free((void *) buf);
+  diskann::aligned_free((void *) buf);
   double e2e_time = ((double) merge_timer.elapsed()) / (1000000.0);
   diskann::cout << "Time to merge the inserts to disk: " << e2e_time << "s."
                 << std::endl;
@@ -1179,7 +1169,7 @@ void Level0Merger<T, TagT>::merge(const char *                    disk_in,
   //    std::make_shared<MemAlignedFileReader>();
 
   // 创建一个新的 PQFlashIndex 对象，负责磁盘索引的操作
-  this->disk_index = new PQFlashIndex<T, TagT>(
+  this->disk_index = new diskann::PQFlashIndex<T, TagT>(
       this->dist_metric, reader, this->_single_file_index, true);
   diskann::cout << "Created PQFlashIndex inside index_merger " << std::endl;
 
@@ -1252,7 +1242,7 @@ void Level0Merger<T, TagT>::merge(const char *                    disk_in,
                     << ", # dims = " << bin_ndims << "\n";
 
       // 创建一个新的内存索引对象
-      auto mem_index = std::make_unique<Index<T, TagT>>(
+      auto mem_index = std::make_unique<diskann::Index<T, TagT>>(
           this->dist_metric, bin_ndims, bin_npts + 100, true,
           this->_single_file_index, true, false);
 
@@ -1326,7 +1316,7 @@ void Level0Merger<T, TagT>::merge(const char *                    disk_in,
 
       // call mem_index constructor with dynamic index and single index file
       // set to true
-      auto mem_index = std::make_unique<Index<T, TagT>>(
+      auto mem_index = std::make_unique<diskann::Index<T, TagT>>(
           this->dist_metric, data_dim, data_num_points + 100, true,
           this->_single_file_index, true, false);
 
@@ -1380,7 +1370,7 @@ void Level0Merger<T, TagT>::merge(const char *                    disk_in,
   // 分配每个线程的 scratch 空间，用于并行处理
   diskann::cout << "Allocating thread scratch space -- "
                 << PER_THREAD_BUF_SIZE / (1 << 20) << " MB / thread.\n";
-  alloc_aligned((void **) &this->thread_pq_scratch,
+  diskann::alloc_aligned((void **) &this->thread_pq_scratch,
                 MAX_N_THREADS * PER_THREAD_BUF_SIZE, SECTOR_LEN);
   this->thread_bufs.resize(MAX_N_THREADS);
   for (uint32_t i = 0; i < thread_bufs.size(); i++) {

@@ -42,15 +42,16 @@ typedef int FileHandle;
 // https://github.com/Microsoft/BLAS-on-flash/blob/master/include/utils.h
 // round up X to the nearest multiple of Y
 #define ROUND_UP(X, Y) \
-  ((((uint64_t)(X) / (Y)) + ((uint64_t)(X) % (Y) != 0)) * (Y))
+  ((((uint64_t) (X) / (Y)) + ((uint64_t) (X) % (Y) != 0)) * (Y))
 
-#define DIV_ROUND_UP(X, Y) (((uint64_t)(X) / (Y)) + ((uint64_t)(X) % (Y) != 0))
+#define DIV_ROUND_UP(X, Y) \
+  (((uint64_t) (X) / (Y)) + ((uint64_t) (X) % (Y) != 0))
 
 // round down X to the nearest multiple of Y
-#define ROUND_DOWN(X, Y) (((uint64_t)(X) / (Y)) * (Y))
+#define ROUND_DOWN(X, Y) (((uint64_t) (X) / (Y)) * (Y))
 
 // alignment tests
-#define IS_ALIGNED(X, Y) ((uint64_t)(X) % (uint64_t)(Y) == 0)
+#define IS_ALIGNED(X, Y) ((uint64_t) (X) % (uint64_t) (Y) == 0)
 #define IS_512_ALIGNED(X) IS_ALIGNED(X, 512)
 #define IS_4096_ALIGNED(X) IS_ALIGNED(X, 4096)
 #define METADATA_SIZE \
@@ -179,6 +180,23 @@ inline int delete_file(const std::string& fileName) {
   }
 }
 
+inline int rename_file(const std::string& new_file,
+                       const std::string& old_file) {
+  if (file_exists(old_file)) {
+    auto rc = ::rename(old_file.c_str(), new_file.c_str());
+    if (rc != 0) {
+      diskann::cerr
+          << "Could not rename file: " << old_file
+          << " even though it exists. This might indicate" << new_file
+          << " is already exists. "
+             "If you see this message, please contact the diskann team."
+          << std::endl;
+    }
+    return rc;
+  } else {
+    return 0;
+  }
+}
 namespace diskann {
   static const size_t MAX_SIZE_OF_STREAMBUF = 2LL * 1024 * 1024 * 1024;
 
