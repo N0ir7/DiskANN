@@ -491,8 +491,8 @@ void DiskIndexMerger<T, TagT>::OccludeListWithPQDistance(std::vector<diskann::Ne
   assert(std::is_sorted(pool.begin(), pool.end()));
   assert(!pool.empty());
   float alpha = this->alpha();
-  int range = this->range();
-  int maxc = this->maxc();
+  uint32_t range = this->range();
+  uint32_t maxc = this->maxc();
   float cur_alpha = 1;
   while (cur_alpha <= alpha && result.size() < range) {
     uint32_t start = 0;
@@ -554,7 +554,7 @@ void DiskIndexMerger<T, TagT>::PruneNeighbors(const tsl::robin_map<uint32_t, T *
     return;
   
   float alpha = this->alpha();
-  int range = this->range();
+  uint32_t range = this->range();
   // sort the pool based on distance to query
   std::sort(pool.begin(), pool.end());
 
@@ -590,8 +590,8 @@ void DiskIndexMerger<T, TagT>::OccludeList(
 
   float cur_alpha = 1;
   float alpha = this->alpha();
-  int range = this->range();
-  int maxc = this->maxc();
+  uint32_t range = this->range();
+  uint32_t maxc = this->maxc();
 
   while (cur_alpha <= alpha && result.size() < range) {
     uint32_t start = 0;

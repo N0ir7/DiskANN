@@ -1,10 +1,22 @@
 #include "lsm/tag_deleter.h"
 
 namespace lsmidx{
-
+template<typename TagT>
+TagDeleter<TagT>::TagDeleter(int num):check_switch_delete(false){
+    // 初始化tag_sets及对应的状态数组
+    this->deletion_tag_sets.resize(num);
+    this->active_states.reserve(num);
+    for(int i = 0; i < num; i++){
+        this->active_states.emplace_back(std::make_unique<std::atomic_bool>(false));
+    }
+    // 将第一个tag_set激活
+    bool expected_active = false;
+    this->active_states[0]->compare_exchange_strong(expected_active, true);
+    this->current = 0;
+}
 template<typename TagT>
 bool TagDeleter<TagT>::Insert(TagT tag){
-  if(this->active_states[this->current].load() == false){
+  if(this->active_states[this->current]->load() == false){
     diskann::cout << "Active deletion set indicated as deletion_tag_set"<<this->current<<" but it cannot accept deletions" << std::endl;
     return false;
   }
@@ -15,7 +27,7 @@ bool TagDeleter<TagT>::Insert(TagT tag){
 
 template<typename TagT>
 bool TagDeleter<TagT>::IsDelete(TagT tag){
-  for(int i = 0;i< this->deletion_tag_sets.size();i++){
+  for(size_t i = 0;i< this->deletion_tag_sets.size();i++){
     tsl::robin_set<TagT>& deletion_set = this->deletion_tag_sets[i];
     if(deletion_set.find(tag) != deletion_set.end()){
       return true;
@@ -42,7 +54,7 @@ std::vector<TagT>* TagDeleter<TagT>::Switch(){
    * 将下一个活动set从非激活态设置为激活态，并将其原本内容清空
   */
   bool expected_active = false;
-  if(this->active_states[next_idx].compare_exchange_strong(expected_active, true)) {
+  if(this->active_states[next_idx]->compare_exchange_strong(expected_active, true)) {
     this->deletion_tag_sets[next_idx].clear();
     diskann::cout << "Cleared deletion_tag_set_"<<next_idx<<" - ready to accept new points" << std::endl;
   } else{
@@ -51,7 +63,7 @@ std::vector<TagT>* TagDeleter<TagT>::Switch(){
 
   // 将原本激活的set设置为非激活
   expected_active  = true;
-  this->active_states[this->current].compare_exchange_strong(expected_active, false);
+  this->active_states[this->current]->compare_exchange_strong(expected_active, false);
   
   // 将原本的set中的tag返回
   tsl::robin_set<TagT>& cur_set = this->deletion_tag_sets[this->current];
@@ -71,5 +83,19 @@ std::vector<TagT>* TagDeleter<TagT>::Switch(){
 
   return del_vec;
 }
-
+template<typename TagT>
+void TagDeleter<TagT>::FilterDeletedTags(tsl::robin_set<TagT>& active_tags){
+  for(auto& delete_set: this->deletion_tag_sets){
+      for(TagT tag: delete_set){
+          if(active_tags.find(tag) == active_tags.end()){
+            continue;
+          }
+          active_tags.erase(tag);
+      }
+  }
+  return;
+}
+template class TagDeleter<uint32_t>;
+template class TagDeleter<int64_t>;
+template class TagDeleter<uint64_t>;
 } // namesp lsmidx

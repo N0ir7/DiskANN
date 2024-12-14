@@ -5,7 +5,7 @@ add_library(diskann_dll SHARED dllmain.cpp
     diskann_interface.cpp diskann_incr_index.cpp ../partition_and_pq.cpp ../pq_flash_index.cpp
     ../windows_aligned_file_reader.cpp bing_aligned_file_reader.cpp ../logger.cpp ../utils.cpp
     ../memory_mapper.cpp ../distance.cpp ../index.cpp ../math_utils.cpp ../aux_utils.cpp ../v2/graph_delta.cpp 
-    ../v2/index_merger.cpp ../v2/merge_insert.cpp ../ann_exception.cpp )
+    ../v2/index_merger.cpp ../v2/merge_insert.cpp ../ann_exception.cpp ../lsm/disk_index_merger.cpp ../lsm/index_data_iterator.cpp ../lsm/level_index.cpp ../lsm/level0_merger.cpp ../lsm/leveln_merger.cpp ../lsm/lsm_index.cpp ../lsm/tag_deleter.cpp)
 if (MSVC)
 	add_definitions(-D_USRDLL -D_WINDLL -DDISKANN_DLL)
 	add_compile_options(/MD)

@@ -87,7 +87,7 @@ namespace diskann {
     // saving is successful
     void merge();
 
-   private:
+   public:
     size_t   _merge_th = 0;
     size_t   _mem_points = 0;  // reflects number of points in active mem index
     size_t   _index_points = 0;

@@ -61,7 +61,7 @@ class TagSlice {
  public:
 
   // Create a slice that refers to d[0,n-1].
-  TagSlice(const T* tag) : tag_(tag){}
+  TagSlice(const T tag) : tag_(tag){}
 
   // Intentionally copyable.
   TagSlice(const TagSlice&) = default;
@@ -82,4 +82,13 @@ class TagSlice {
  private:
   const T tag_;
 };
+
+  // template class instantiations
+  template class VecSlice<float>;
+  template class VecSlice<uint8_t>;
+  template class VecSlice<int8_t>;
+  
+  template class TagSlice<uint32_t>;
+  template class TagSlice<int64_t>;
+  template class TagSlice<uint64_t>;
 } // namespace lsmidx

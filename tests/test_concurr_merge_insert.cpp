@@ -47,6 +47,7 @@ std::future<void>     merge_future;
 diskann::Timer        global_timer;
 std::string           all_points_file;
 bool                  save_index_as_one_file;
+bool                  search_only;
 std::string           TMP_FOLDER;
 std::string           query_file = "";
 std::string           truthset_file = "";
@@ -262,12 +263,12 @@ void search_kernel(diskann::MergeInsert<T>        &merge_insert,
   float    *gt_dists = nullptr;
   size_t    query_num, query_dim, query_aligned_dim, gt_num, gt_dim;
 
-  const std::string temp = "/mnt/t-adisin/sift_query.bin";
-  std::cout << "Loading query : " << temp << std::endl;
+  std::cout << "Loading query : " << ::query_file << std::endl;
   // load query + truthset
-  diskann::load_aligned_bin<T>(temp, query, query_num, query_dim,
+  diskann::load_aligned_bin<T>(::query_file, query, query_num, query_dim,
                                query_aligned_dim);
-  std::cout << "Loaded query : " << temp << std::endl;
+  std::cout << "Loaded query : " << ::truthset_file << std::endl;
+  std::cout << "Loading gt : " << ::query_file << std::endl;
   diskann::load_truthset(::truthset_file, gt_ids, gt_dists, gt_num, gt_dim,
                          &gt_tags);
   std::cout << "Loaded gt" << std::endl;
@@ -506,7 +507,16 @@ void run_iter(diskann::MergeInsert<T>  &merge_insert,
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   } while ((merge_status != std::future_status::ready));
 }
+template<typename T, typename TagT = uint32_t>
+void run_search_iter(diskann::MergeInsert<T>  &merge_insert,
+                     tsl::robin_set<uint32_t> &active_set) {
+  // 不断执行搜索操作
+  // 调用 search_kernel 执行搜索操作，使用 active_set
+  search_kernel<T>(merge_insert, active_set);
 
+  // 每次搜索后休眠 0.5 秒
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+}
 template<typename T, typename TagT = uint32_t>
 void run_single_iter(diskann::MergeInsert<T>  &merge_insert,
                      const std::string        &base_prefix,
@@ -650,7 +660,19 @@ void run_all_iters(std::string base_prefix, std::string merge_prefix,
   //  search_kernel<T, TagT>(merge_insert, active_tags, true);
   for (size_t i = 0; i < n_iters; i++) {
     std::cout << "ITER : " << i << std::endl;
-    run_iter<T>(merge_insert, mem_prefix, active_tags, inactive_tags);
+    if (::search_only) {
+      merge_insert._mem_index_0->load(mem_prefix.c_str());
+      tsl::robin_set<uint32_t> mem_active_tags;
+      merge_insert._mem_index_0->get_active_tags(mem_active_tags);
+      for (auto iter : mem_active_tags) {
+        if (active_tags.find(iter) != active_tags.end()) {
+          active_tags.insert(iter);
+        }
+      }
+      run_search_iter(merge_insert, active_tags);
+    } else {
+      run_iter<T>(merge_insert, mem_prefix, active_tags, inactive_tags);
+    }
   }
   /*
   std::cout << "Done running all iterations, now merging any leftover points."
@@ -674,7 +696,7 @@ void run_all_iters(std::string base_prefix, std::string merge_prefix,
 
 int main(int argc, char **argv) {
   std::cout << "Entering main()" << std::endl;
-  if (argc < 20) {
+  if (argc < 21) {
     std::cout << "Correct usage: " << argv[0]
               << " <type[int8/uint8/float]> <WORKING_FOLDER> <base_prefix> "
                  "<merge_prefix> <mem_prefix> <L_mem> <alpha_mem> <L_disk> "
@@ -682,6 +704,7 @@ int main(int argc, char **argv) {
               << " <full_data_bin> <single_file[0/1]> <query_bin> <truthset>"
               << " <n_iters> <total_insert_count> <total_delete_count> <range> "
                  "<recall_k> "
+                 "<search_only> "
                  "<search_L1> <search_L2> <search_L3> ...."
               << "\n WARNING: Other parameters set inside CPP source."
               << std::endl;
@@ -711,6 +734,7 @@ int main(int argc, char **argv) {
   uint32_t    delete_count = (uint32_t) atoi(argv[arg_no++]);
   uint32_t    range = (uint32_t) atoi(argv[arg_no++]);
   uint32_t    recall_k = (uint32_t) atoi(argv[arg_no++]);
+  int         search_only = atoi(argv[arg_no++]);
 
   for (int ctr = arg_no; ctr < argc; ctr++) {
     _u32 curL = std::atoi(argv[ctr]);
@@ -742,6 +766,11 @@ int main(int argc, char **argv) {
     ::save_index_as_one_file = true;
   else
     ::save_index_as_one_file = false;
+
+  if (search_only == 1)
+    ::search_only = true;
+  else
+    ::search_only = false;
 
   std::string active_tags_filename;
   if (single_file)

@@ -20,7 +20,7 @@ struct DiskIndexFileMeta{
   bool is_single_file;
   DiskIndexFileMeta(){};
   DiskIndexFileMeta(std::string data_path,std::string tag_path,std::string pq_coords_path,std::string pq_table_path)
-  :data_path(data_path),tag_path(tag_path),pq_coords_path(pq_coords_path),pq_table_path(pq_coords_path){};
+  :data_path(data_path),tag_path(tag_path),pq_coords_path(pq_coords_path),pq_table_path(pq_table_path){};
 
   DiskIndexFileMeta(std::string iprefix,bool is_single_file):is_single_file(is_single_file){
     index_prefix_path = iprefix;

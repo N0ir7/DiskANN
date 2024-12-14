@@ -28,22 +28,23 @@ class LSMVectorIndex{
               const TagSlice<TagT>& value);
     void Delete(const WriteOptions& options, const TagSlice<TagT>& value);
     void Search(const SearchOptions& options, const VecSlice<T>& key,
-              std::vector<diskann::Neighbor_Tag<TagT>>& result);
+              TagT* tags, float * distances, diskann::QueryStats * stats);
     
     // Background merge
     void MergeMemIndex(std::string mem_index_path);
     void TriggerMergeMemIndex();
     std::unique_ptr<Level0Merger<T, TagT>> ConstructLevel0Merger();
     // other help functions
-    void SetSeachParams(diskann::Parameters& parameters);
+    void SetSeachParams(const diskann::Parameters& parameters);
     void SetSystemParams(const BuildOptions& options);
     void SetDistanceFunction(diskann::Distance<T>* dist, diskann::Metric dist_metric);
     void SetReader();
+    void GetActiveTags(tsl::robin_set<TagT>& active_tags);
   private:
   /**
    * some tools classes
    */
-  std::shared_ptr<AlignedFileReader> reader = nullptr; // 各层索引共用一个reader
+  std::vector<std::shared_ptr<AlignedFileReader>> readers; 
   // ThreadPool* search_tpool;
   diskann::Metric dist_metric;
   diskann::Distance<T>* dist_comp;
@@ -53,7 +54,8 @@ class LSMVectorIndex{
   // std::unordered_map<unsigned, TagT> curr_location_to_tag;
   std::vector<const std::vector<TagT>*> deleted_tags_vector;
   // for global delete
-  TagDeleter<TagT> global_in_mem_delete_tag_set;
+  std::unique_ptr<TagDeleter<TagT>> global_in_mem_delete_tag_set;
+  // TagDeleter<TagT> global_in_mem_delete_tag_set;
   // tsl::robin_set<TagT> deletion_set_0;
   // tsl::robin_set<TagT> deletion_set_1;
   // int active_delete_set = 0;                // reflects active _deletion_set
@@ -72,16 +74,16 @@ class LSMVectorIndex{
    */
   std::shared_timed_mutex delete_lock;              // lock to access _deletion_set
   std::shared_timed_mutex index_lock;               // mutex to switch between mem indices
-  std::vector<std::shared_timed_mutex> disk_locks;  // mutex to switch between disk indices
-  std::atomic_bool switching_disk = false;          // wait if true, search when false
-  std::atomic_bool check_switch_index = false;      // true when switch_index acquires _index_lock in writer mode,
+  std::vector<std::unique_ptr<std::shared_timed_mutex>> disk_locks;  // mutex to switch between disk indices
+  std::atomic_bool switching_disk;          // wait if true, search when false
+  std::atomic_bool check_switch_index;      // true when switch_index acquires _index_lock in writer mode,
                                                      // insert threads wait till it turns back to false
 
   /**
    * parameters and options
    */
-  // diskann::Parameters paras_mem;
-  // diskann::Parameters paras_disk;
+  std::shared_ptr<diskann::Parameters> paras_mem;
+  std::shared_ptr<diskann::Parameters> paras_disk;
   bool is_single_file_index;
   // size_t   merge_th = 0;
   // size_t   mem_points = 0;  // reflects number of points in active mem index

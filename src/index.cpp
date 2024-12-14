@@ -1265,8 +1265,9 @@ namespace diskann {
           size_t                 node_offset = node_ctr - start_id;
           std::vector<unsigned> &pruned_list = pruned_list_vector[node_offset];
           _final_graph[node].clear();
-          for (auto id : pruned_list)
+          for (auto id : pruned_list) {
             _final_graph[node].emplace_back(id);
+          }
         }
         s = std::chrono::high_resolution_clock::now();
         /**
