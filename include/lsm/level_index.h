@@ -23,7 +23,8 @@ class LevelIndex{
 public:
   virtual void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats=nullptr) = 0;
   virtual void GetActiveTags(tsl::robin_set<TagT>& active_tags) = 0;
-
+  virtual int GetCurrentNumPoints() = 0;
+  virtual void ClearIndex(size_t idx = 0) = 0;
   LevelIndex(IndexType type, std::shared_ptr<diskann::Parameters> params, int merge_thresh, int level, size_t dimension, bool is_single_file_index, diskann::Metric dist_metric):type(type), paras(params), merge_thresh(merge_thresh),level(level),dimension(dimension),is_single_file_index(is_single_file_index),dist_metric(dist_metric){}
 
   std::shared_ptr<diskann::Parameters> GetParameter(){
@@ -31,6 +32,9 @@ public:
   };
   std::string GetIndexPrefix(){
     return this->index_prefix;
+  }
+  bool IsEmpty(){
+    return this->GetCurrentNumPoints() == 0;
   }
 protected:
   IndexType type;
@@ -52,12 +56,15 @@ public:
   void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats=nullptr) override;
 
   void GetActiveTags(tsl::robin_set<TagT>& active_tags) override;
+  int GetCurrentNumPoints() override;
 
   PQFlashIndexProxy(diskann::Metric dist_metric, std::string working_dir, std::shared_ptr<AlignedFileReader> &fileReader, size_t dims, size_t merge_thresh, std::shared_ptr<diskann::Parameters> paras_disk, int cur_level, bool is_single_file_index, int num_threads);
   
   void ReloadIndex(const std::string &disk_index_prefix);
+  void ClearIndex(size_t idx = 0) override;
 private:
   std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index;
+  std::shared_ptr<AlignedFileReader> reader;
 };
 
 template<typename T, typename TagT = uint32_t>
@@ -73,11 +80,11 @@ public:
   int Put(const WriteOptions& options, const VecSlice<T>& key, const TagT& value);
   int Switch();
   std::string SaveIndex(size_t idx);
-  void ClearIndex(size_t idx);
+  void ClearIndex(size_t idx = 0) override;
   int GetNextSwitchIdx();
 
   // 返回current指向的mem index的点数量
-  int GetCurrentNumPoints();
+  int GetCurrentNumPoints() override;
   
 private:
   /**

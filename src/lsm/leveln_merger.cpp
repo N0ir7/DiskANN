@@ -132,17 +132,25 @@ void LevelNMerger<T, TagT>::merge(const char * dist_disk_index_path,
 
 template<typename T, typename TagT>
 void LevelNMerger<T, TagT>::MergeImpl() {
+
+diskann::Timer timer;
+auto report_time = [](diskann::Timer &timer, const std::string &msg) {
+  diskann::cout << "【" << msg<< " 】";
+  double time = ((double) timer.elapsed_and_reset()) / (1000000.0);
+  diskann::cout << " cost time: " << time << " s." << std::endl;
+};
 /**
  * 1. Delete Phase
  */
 DeletePhase();
-
+report_time(timer, "Delete Phase");
+this->to_disk_index_merger_->TagInfo();
 /**
  * 2. Insert Prepare Phase
  */
 uint32_t new_max_pts = this->ComputeNewMaxPts();
-// 在DeletePhase的最后阶段，进行了DataFile写入中间文件的工作，这里只需要写入PQ坐标和Tag数据即可
-this->WriteIntermediateIndexFile(this->to_disk_index_merger_->meta,this->intermediate_index_file_meta_,new_max_pts);
+// 在DeletePhase的最后阶段，进行了data, pq, tag写入中间文件的工作, 这里只需要针对InsertPhase阶段的点, 对上述三个文件数据进行扩充,预留好对应空间即可
+this->ExpandIntermediateIndexFile(this->intermediate_index_file_meta_, new_max_pts);
 
 // 第四步：重新加载更新后的索引
 this->to_disk_index_merger_->index->reload_index(this->intermediate_index_file_meta_.data_path,
@@ -155,36 +163,26 @@ assert(this->to_disk_index_merger_->num_points() == new_max_pts);
 std::cout << "AFTER RELOAD: PQ_NChunks: " << this->to_disk_index_merger_->pq_nchunks()
           << " Disk points: " << this->to_disk_index_merger_->num_points()
           << " Frozen point id: " << this->to_disk_index_merger_->init_ids()[0] << std::endl;
+
+report_time(timer, "Insert Prepare Phase");
+this->to_disk_index_merger_->TagInfo();
 /**
  * 3. insert phase
  */
 InsertPhase();
-
+// 后续不再使用from_disk_index_merger_了，提前释放资源
+this->from_disk_index_merger_.reset();
+report_time(timer, "Insert Phase");
+this->to_disk_index_merger_->TagInfo();
 // END -- PQ data on disk consistent and in correct order
 /**
  * 
  * 4. patch phase
  */
+
 PatchPhase();
-
-/**
- * 5. patch end phase
-*/
-// copy pq coord
-CopyFile(intermediate_index_file_meta_.pq_coords_path,final_index_file_meta_.pq_coords_path);
-
-// copy pq table
-CopyFile(intermediate_index_file_meta_.pq_table_path,final_index_file_meta_.pq_table_path);
-
-// copy medoids file
-CopyFile(intermediate_index_file_meta_.medoids_file_path,final_index_file_meta_.medoids_file_path);
-
-// copy centroids file
-CopyFile(intermediate_index_file_meta_.centroids_file_path,final_index_file_meta_.centroids_file_path);
-
-// copy tag
-CopyFile(intermediate_index_file_meta_.tag_path, final_index_file_meta_.tag_path);
-
+report_time(timer, "Patch Phase");
+this->to_disk_index_merger_->TagInfo();
 }
 template<typename T, typename TagT>
 uint32_t LevelNMerger<T, TagT>::ComputeNewMaxPts(){
@@ -236,17 +234,23 @@ template<typename T, typename TagT>
 void LevelNMerger<T, TagT>::InsertPhase(){
   DiskIndexDataIterator<T, TagT> from_disk_index_data_iter = std::move(this->from_disk_index_merger_->GetIterator());
   from_disk_index_data_iter.Init(true/* read_only*/);
-  
+
+  DiskIndexDataIterator<T, TagT> to_disk_index_data_iter = std::move(this->to_disk_index_merger_->GetIterator());
+  to_disk_index_data_iter.Init(false/* read_write*/);
+  int batch_cnt = 0, num_cnt = 0;
+  diskann::Timer timer;
   while (from_disk_index_data_iter.HasNextBatch()){
     // prepare inserted point
     std::vector<diskann::DiskNode<T>>* from_node_batch = nullptr;
     TagT* tag_list = nullptr;
     std::tie(from_node_batch, std::ignore, tag_list) = from_disk_index_data_iter.NextBatch();
+    this->to_disk_index_merger_->ProcessInserts(*from_node_batch, tag_list, to_disk_index_data_iter);
 
-    this->to_disk_index_merger_->ProcessInserts(*from_node_batch, tag_list);
-    
+    num_cnt += from_node_batch->size();
+    diskann::cout << "batch count: " << ++batch_cnt << "; total points: " << num_cnt << "; cost time: " << ((double) timer.elapsed() / (double) 1000000) << "s" << std::endl;
+    timer.reset();
   }
-  
+  this->to_disk_index_merger_->WriteDataFileHeaderAfterInsertPhase();
 }
 /*
  * 该阶段主要将disk index扫一遍，将backward edge插一遍
@@ -290,7 +294,7 @@ bool LevelNMerger<T, TagT>::CopyAndExpandFile(const std::string& srcPath, const 
             destFile.put('\0');  // 写入空字节
         }
     }
-
+    std::cout<< "copy file from (" << srcPath << ") to (" << destPath << ") and expand size: " << expansionSize <<" bytes; "  << std::endl;
     srcFile.close();
     destFile.close();
     return true;
@@ -309,7 +313,7 @@ bool LevelNMerger<T, TagT>::CopyFile(const std::string& srcPath, const std::stri
         std::cerr << "unable to open dest file: " << destPath << std::endl;
         return false;
     }
-
+    std::cout<< "copy file from (" << srcPath << ") to (" << destPath << ")" << std::endl;
     // 将源文件内容复制到目标文件
     destFile << srcFile.rdbuf();
     srcFile.close();
@@ -317,29 +321,65 @@ bool LevelNMerger<T, TagT>::CopyFile(const std::string& srcPath, const std::stri
     return true;
 }
 template<typename T, typename TagT>
-void LevelNMerger<T, TagT>::WriteIntermediateIndexFile(DiskIndexFileMeta& src_index_file_meta,
+bool LevelNMerger<T, TagT>::ExpandFile(const std::string& destPath, std::streamsize targetSize){
+  // 打开目标文件进行写入
+    std::ofstream destFile(destPath, std::ios::binary | std::ios::app);
+    if (!destFile) {
+        std::cerr << "unable to open dest file: " << destPath << std::endl;
+        return false;
+    }
+    std::streamsize srcSize = destFile.tellp();
+
+    // 如果目标大小小于源文件大小，则无需扩容
+    if (targetSize <= srcSize) {
+        return true;
+    }
+    
+    // 扩容：在目标文件末尾添加指定大小的空白字节（用 '\0' 填充）
+    // 计算需要扩容的字节数
+    std::streamsize expansionSize = targetSize - srcSize;
+    if (expansionSize > 0) {
+        destFile.seekp(0, std::ios::end);  // 移动到文件末尾
+        for (std::streamsize i = 0; i < expansionSize; ++i) {
+            destFile.put('\0');  // 写入空字节
+        }
+    }
+    std::cout<< "expand file (" << destPath << ") and expand size: " << expansionSize <<" bytes; "  << std::endl;
+    destFile.close();
+    return true;
+}
+template<typename T, typename TagT>
+void LevelNMerger<T, TagT>::ExpandIntermediateIndexFile(
                                                       DiskIndexFileMeta& temp_index_file_meta,
                                                       uint32_t new_max_pts){
-  // 先写PQ坐标的中间文件
+  // 扩充 data file的大小
+  std::streamsize data_file_size =
+    SECTOR_LEN + (ROUND_UP(
+                      (uint64_t) new_max_pts,
+                      this->to_disk_index_merger_->nnodes_per_sector()
+                    ) /this->to_disk_index_merger_->nnodes_per_sector())
+                   * (uint64_t) SECTOR_LEN;
+  ExpandFile(temp_index_file_meta.data_path, data_file_size);
+
+  // 扩充PQ坐标的中间文件
   std::streamsize pq_file_size =
     ((uint64_t) new_max_pts * (uint64_t) this->to_disk_index_merger_->pq_nchunks()) +
     (2 * sizeof(uint32_t));
-  CopyAndExpandFile(src_index_file_meta.pq_coords_path,temp_index_file_meta.pq_coords_path,pq_file_size);
+  ExpandFile(temp_index_file_meta.pq_coords_path, pq_file_size);
   
   // 修改PQ坐标中间文件的元信息
-  std::ofstream pq_writer(temp_index_file_meta.pq_coords_path, std::ios::binary);
+  std::ofstream pq_writer(temp_index_file_meta.pq_coords_path, std::ios::binary | std::ios::in | std::ios::out);
   pq_writer.seekp(0, std::ios::beg);
   uint32_t npts_u32 = new_max_pts, ndims_u32 = this->to_disk_index_merger_->pq_nchunks();
   pq_writer.write((char *) &npts_u32, sizeof(uint32_t));
   pq_writer.write((char *) &ndims_u32, sizeof(uint32_t));
   pq_writer.close();
   
-  // 再写tag的中间文件
+  // 扩充tag的中间文件
   std::streamsize tag_file_size = new_max_pts * sizeof(TagT) + 2 * sizeof(uint32_t);
-  CopyAndExpandFile(src_index_file_meta.tag_path, temp_index_file_meta.tag_path, tag_file_size);
-
+  ExpandFile(temp_index_file_meta.tag_path, tag_file_size);
   // 修改tag中间文件的元信息
-  std::ofstream tag_writer(temp_index_file_meta.pq_coords_path, std::ios::binary);
+  std::ofstream tag_writer(temp_index_file_meta.tag_path, std::ios::binary | std::ios::in | std::ios::out);
   tag_writer.seekp(0, std::ios::beg);
   int npts_i32 = new_max_pts, ndims_i32 = 1;
   tag_writer.write((char *) &npts_i32, sizeof(int));

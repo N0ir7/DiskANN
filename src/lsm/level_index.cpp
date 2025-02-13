@@ -12,7 +12,11 @@ void PQFlashIndexProxy<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active_tags
     return;
 }
 template<typename T, typename TagT>
-PQFlashIndexProxy<T, TagT>::PQFlashIndexProxy(diskann::Metric dist_metric, std::string working_dir, std::shared_ptr<AlignedFileReader> &reader, size_t dims, size_t merge_thresh, std::shared_ptr<diskann::Parameters> paras_disk, int level, bool is_single_file_index, int num_threads):LevelIndex<T, TagT>(IndexType::ON_DISK_DISKANN, paras_disk, merge_thresh, level, dims, is_single_file_index, dist_metric){
+int PQFlashIndexProxy<T, TagT>::GetCurrentNumPoints(){
+    return this->index->return_nd();
+}
+template<typename T, typename TagT>
+PQFlashIndexProxy<T, TagT>::PQFlashIndexProxy(diskann::Metric dist_metric, std::string working_dir, std::shared_ptr<AlignedFileReader> &reader, size_t dims, size_t merge_thresh, std::shared_ptr<diskann::Parameters> paras_disk, int level, bool is_single_file_index, int num_threads):LevelIndex<T, TagT>(IndexType::ON_DISK_DISKANN, paras_disk, merge_thresh, level, dims, is_single_file_index, dist_metric),reader(reader){
     // 初始化基本参数
     this->index_prefix = working_dir + '/' + lsmidx::config::leveln_index_names[level-1];
 
@@ -31,7 +35,9 @@ PQFlashIndexProxy<T, TagT>::PQFlashIndexProxy(diskann::Metric dist_metric, std::
 
 template<typename T, typename TagT>
 void PQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats){
-
+  if(this->IsEmpty()){
+    return;
+  }
   uint64_t search_L = options.search_L;
   uint64_t beamwidth = options.beamwidth;
   uint64_t k = options.K;
@@ -51,6 +57,12 @@ void PQFlashIndexProxy<T, TagT>::ReloadIndex(const std::string &disk_index_prefi
     this->index->reload_index(disk_index_data_path, disk_pq_coord_path, disk_tag_path);
 }
 
+template<typename T, typename TagT>
+void PQFlashIndexProxy<T, TagT>::ClearIndex([[maybe_unused]]size_t idx){
+    // 进行clear
+    this->index.reset();
+    this->index = std::make_shared<diskann::PQFlashIndex<T, TagT>>(this->dist_metric, this->reader, this->is_single_file_index, true/*enable tags*/);
+}
 template<typename T, typename TagT>
 void InMemIndexProxy<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active_tags){
     tsl::robin_set<TagT> tags;

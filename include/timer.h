@@ -21,5 +21,12 @@ namespace diskann {
                  _clock::now() - check_point)
           .count();
     }
+    long long elapsed_and_reset() {
+      auto res = std::chrono::duration_cast<std::chrono::microseconds>(
+                     _clock::now() - check_point)
+                     .count();
+      this->reset();
+      return res;
+    }
   };
 }  // namespace diskann

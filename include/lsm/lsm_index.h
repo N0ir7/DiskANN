@@ -6,6 +6,7 @@
 #include "lsm/options.h"
 #include "lsm/slice.h"
 #include "lsm/level_merger.h"
+#include "lsm/leveln_merger.h"
 #include "pq_flash_index.h"
 #include "linux_aligned_file_reader.h"
 #include "index.h"
@@ -31,9 +32,10 @@ class LSMVectorIndex{
               TagT* tags, float * distances, diskann::QueryStats * stats);
     
     // Background merge
-    void MergeMemIndex(std::string mem_index_path);
+    
     void TriggerMergeMemIndex();
-    std::unique_ptr<Level0Merger<T, TagT>> ConstructLevel0Merger();
+    void TriggerMergeDiskIndex(int level);
+    
     // other help functions
     void SetSeachParams(const diskann::Parameters& parameters);
     void SetSystemParams(const BuildOptions& options);
@@ -41,6 +43,12 @@ class LSMVectorIndex{
     void SetReader();
     void GetActiveTags(tsl::robin_set<TagT>& active_tags);
   private:
+  // Background merge
+  void MergeMemIndex(std::string mem_index_path);
+  void MergeDiskIndex(int from_level, int to_level);
+
+  std::unique_ptr<Level0Merger<T, TagT>> ConstructLevel0Merger();
+  std::unique_ptr<LevelNMerger<T, TagT>> ConstructLevelNMerger(int to_level);
   /**
    * some tools classes
    */

@@ -8,29 +8,31 @@ template<typename T, typename TagT>
 DiskIndexDataIterator<T, TagT>::~DiskIndexDataIterator(){
   TryFlushBack();
   diskann::aligned_free((void *) buf_);
-  if(output_writer_){
-    output_writer_->close();
-  }
 }
 
 template<typename T, typename TagT>
-void DiskIndexDataIterator<T, TagT>::Init(bool read_only,std::string output_data_path){
+void DiskIndexDataIterator<T, TagT>::Init(bool read_only,DiskIndexFileMeta* output_index_file_meta){
 
   // 初始化数据路径
-  std::string output_path = this->index_file_meta_.data_path;
-  if(!output_data_path.empty()){
-    output_path = output_data_path;
+  this->output_index_file_meta_ = this->index_file_meta_;
+  if(output_index_file_meta != nullptr){
+    this->output_index_file_meta_ = *output_index_file_meta;
+    this->read_write_same_file_ = false;
   }
-
+  diskann::cout << "Init a Disk Iterator of" << this->index_file_meta_.data_path << "; Alloc a buffer, size: "<< SECTORS_PER_MERGE * SECTOR_LEN/1024/1024<<"MB; ";
   /**
    * 如果需要write，还需要初始化一个writer
   */
   if(!read_only){
-    output_writer_ = std::make_unique<std::ofstream>(output_path, std::ios::out | std::ios::binary);
-    // 为了保持Iterator的功能专一性，我们不在Iterator内进行文件头信息的更新
-    output_writer_->seekp(SECTOR_LEN, std::ios::beg);
+    this->read_only_ = read_only;
+    diskann::cout << "output data path: " 
+                  << this->output_index_file_meta_.data_path
+                  <<" ;output tag path: "
+                  << this->output_index_file_meta_.tag_path
+                  <<" ;outpt pq_compressed path: "
+                  << this->output_index_file_meta_.pq_coords_path;
   }
-
+  diskann::cout<<std::endl;
   // 分配一个读取缓冲区
   diskann::alloc_aligned((void **) &this->buf_, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
 }
@@ -80,7 +82,12 @@ std::tuple<std::vector<diskann::DiskNode<T>>*,uint8_t *, TagT*> DiskIndexDataIte
   uint64_t cur_offset = (uint64_t) this->cur_start_id_;
   const uint64_t pq_offset = cur_offset * pq_nchunks;
   TagT* tag = &this->index_->get_tags()[cur_offset];
+  diskann::cout << "read a batch from " << index_file_meta_.data_path<<"; patch size: "<< this->disk_nodes_.size()<<" nodes"<< std::endl;
 
+  // 如果输出文件与输入文件不同，则无论是否为脏都需要写回
+  if(!read_write_same_file_){
+    this->NotifyFlushBack();
+  }
   return {&this->disk_nodes_, pq_data + pq_offset, tag};
 }
 
@@ -99,7 +106,7 @@ bool DiskIndexDataIterator<T, TagT>::HasNextBatch(){
 
 template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::NotifyFlushBack(){
-  if(!output_writer_){
+  if(read_only_){
     return;
   }
   if(!node_need_flush_back_){
@@ -114,7 +121,7 @@ void DiskIndexDataIterator<T, TagT>::NotifyFlushBack(){
 }
 template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::NotifyPQCoordFlushBack(){
-  if(!output_writer_){
+  if(read_only_){
     return;
   }
   if(!pq_need_flush_back_){
@@ -124,7 +131,7 @@ void DiskIndexDataIterator<T, TagT>::NotifyPQCoordFlushBack(){
 
 template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::NotifyNodeFlushBack(){
-  if(!output_writer_){
+  if(read_only_){
     return;
   }
   if(!node_need_flush_back_){
@@ -134,7 +141,7 @@ void DiskIndexDataIterator<T, TagT>::NotifyNodeFlushBack(){
 
 template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::NotifyTagFlushBack(){
-  if(!output_writer_){
+  if(read_only_){
     return;
   }
   if(!tag_need_flush_back_){
@@ -144,7 +151,7 @@ void DiskIndexDataIterator<T, TagT>::NotifyTagFlushBack(){
 
 template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::TryFlushBack(){
-  if(!output_writer_){
+  if(read_only_){
     return;
   }
   if(node_need_flush_back_){
@@ -161,11 +168,11 @@ void DiskIndexDataIterator<T, TagT>::TryFlushBack(){
 template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::NodeFlushBack(){
   assert(this->node_need_flush_back_);
-  if(!this->output_writer_){
+  diskann::cout << "Dumping graph index from memory.\n";
+  if(read_only_){
     return;
   }
-  this->DumpToDisk(this->cur_start_id_,this->buf_,SECTORS_PER_MERGE,*(this->output_writer_.get()));
-  this->output_writer_->flush();
+  this->DumpToDisk(this->cur_start_id_,this->buf_,SECTORS_PER_MERGE,this->output_index_file_meta_.data_path);
   this->node_need_flush_back_ = false;
 }
 
@@ -178,7 +185,7 @@ void DiskIndexDataIterator<T, TagT>::PQCoordFlushBack(){
   uint64_t pq_nchunks = res.second;
   uint8_t * pq_data = res.first;
 
-  diskann::save_bin<uint8_t>(this->index_file_meta_.pq_coords_path, 
+  diskann::save_bin<uint8_t>(this->output_index_file_meta_.pq_coords_path, 
                             pq_data,
                             (uint64_t) this->index_->return_nd(),
                             pq_nchunks,
@@ -188,12 +195,12 @@ void DiskIndexDataIterator<T, TagT>::PQCoordFlushBack(){
 
 template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::TagFlushBack(){
-  assert(this->pq_need_flush_back_);
+  assert(this->tag_need_flush_back_);
   diskann::cout << "Dumping Tags Data from memory.\n";
   
   TagT* tag_data = this->index_->get_tags();
 
-  diskann::save_bin<TagT>(this->index_file_meta_.tag_path, 
+  diskann::save_bin<TagT>(this->output_index_file_meta_.tag_path, 
                     tag_data, 
                     (uint64_t) this->index_->return_nd(), 
                     1,
@@ -205,22 +212,27 @@ template<typename T, typename TagT>
 void DiskIndexDataIterator<T, TagT>::DumpToDisk(const uint32_t start_id,
                                             const char *   buf,
                                             const uint32_t n_sectors,
-                                            std::ofstream & output_writer) {
+                                            std::string data_path) {
   assert(start_id % this->index_->nnodes_per_sector == 0);
   uint32_t start_sector = (start_id / this->index_->nnodes_per_sector) + 1; // 第一个sector是元信息，+1
   uint64_t start_off = start_sector * (uint64_t) SECTOR_LEN;
 
+  // 为了保持Iterator的功能专一性，我们不在Iterator内进行文件头信息的更新
+  std::ofstream output_writer;
+  open_file_to_write(output_writer, data_path);
   // seek fp
   output_writer.seekp(start_off, std::ios::beg);
 
   // dump
-  output_writer.write(buf, (uint64_t) n_sectors * (uint64_t) SECTOR_LEN);
-
+   uint64_t write_sector = ROUND_UP(this->index_->return_nd() - start_id, this->index_->nnodes_per_sector) / this->index_->nnodes_per_sector;
+  uint64_t bytes_to_write = std::min(write_sector * SECTOR_LEN, (uint64_t)n_sectors * SECTOR_LEN);
+  output_writer.write(buf, bytes_to_write);
 
   // 报错
   uint64_t nb_written =
       (uint64_t) output_writer.tellp() - (uint64_t) start_off;
-  if (nb_written != (uint64_t) n_sectors * (uint64_t) SECTOR_LEN) {
+  output_writer.close();
+  if (nb_written != bytes_to_write) {
     std::stringstream sstream;
     sstream << "ERROR!!! Wrote " << nb_written << " bytes to disk instead of "
             << ((uint64_t) n_sectors) * SECTOR_LEN;
@@ -228,6 +240,7 @@ void DiskIndexDataIterator<T, TagT>::DumpToDisk(const uint32_t start_id,
     throw diskann::ANNException(sstream.str(), -1, __FUNCSIG__, __FILE__,
                                 __LINE__);
   }
+  diskann::cout << "write back " << nb_written << " bytes to" << data_path << std::endl;
 }
 
 template class DiskIndexDataIterator<float, uint32_t>;

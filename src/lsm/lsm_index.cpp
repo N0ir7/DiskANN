@@ -69,11 +69,18 @@ void LSMVectorIndex<T, TagT>::SetReader(){
 }
 template<typename T, typename TagT>
 void LSMVectorIndex<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active_tags){
+    std::cout << "Initial tags num: " << active_tags.size() <<" tags" << std::endl;
+    int ini_size = active_tags.size();
     this->mem_index->GetActiveTags(active_tags);
+    std::cout << "load tags num from memory index: " << active_tags.size() -ini_size<<"/ "<< active_tags.size() <<" tags" << std::endl;
     for(auto& disk_index : disk_indexes){
+        int size = active_tags.size();
         disk_index->GetActiveTags(active_tags);
+        std::cout << "load tags num from disk index: " << active_tags.size()- size<<"/ "<< active_tags.size() <<" tags" << std::endl;
     }
+    int undeleted_size = active_tags.size();
     this->global_in_mem_delete_tag_set->FilterDeletedTags(active_tags);
+    std::cout << "delete tags num from delete set: " << undeleted_size - active_tags.size() << "/ "<< active_tags.size() <<" tags" << std::endl;
     return;
 }
 template<typename T, typename TagT>
@@ -189,6 +196,63 @@ void LSMVectorIndex<T, TagT>::Search(const SearchOptions& options, const VecSlic
     }
 }
 template<typename T, typename TagT>
+std::unique_ptr<Level0Merger<T, TagT>> LSMVectorIndex<T, TagT>::ConstructLevel0Merger(){
+    std::shared_ptr<diskann::Parameters> param = this->disk_indexes[0]->GetParameter();
+    uint32_t range = param->Get<unsigned>("R");
+    uint32_t l_index = param->Get<unsigned>("L");
+    uint32_t maxc = param->Get<unsigned>("C");
+    float alpha = param->Get<float>("alpha");
+    std::unique_ptr<Level0Merger<T, TagT>> merger = std::make_unique<Level0Merger<T, TagT>>((uint32_t) this->dimension, this->dist_comp, this->dist_metric, (uint32_t) this->beamwidth, range, l_index, alpha, maxc, this->is_single_file_index);
+
+    return merger;
+}
+void removeOldFile(std::string& old_file){
+    // Check if the old file exists, if it does, remove it
+    if (file_exists(old_file)) {
+        delete_file(old_file);
+    }
+}
+void removeOldDiskIndex(std::string old_disk_index_prefix){
+    std::vector<std::string> suffixes = {"_disk.index", "_pq_compressed.bin", ".index.tags"};
+    for(auto suffix: suffixes){
+        std::string old_file = old_disk_index_prefix + suffix;
+        removeOldFile(old_file);
+    }
+}
+void removeOldMemIndex(std::string old_mem_index_prefix){
+    std::vector<std::string> suffixes = {"", ".data", ".tags"};
+    for(auto suffix: suffixes){
+        std::string old_file = old_mem_index_prefix + suffix;
+        removeOldFile(old_file);
+    }
+}
+
+void OverwriteOldFile(std::string& old_file, std::string& new_file){
+    // Check if the new file exists
+    if (!file_exists(new_file)) {
+        diskann::cout << "Error: New disk index file does not exist." << std::endl;
+        return;
+    }
+
+    // Check if the old file exists, if it does, remove it
+    if (file_exists(old_file)) {
+        delete_file(old_file);
+    }
+
+    // Rename the new file to the old file's name (overwrite the old one)
+    rename_file(old_file, new_file);
+
+    diskann::cout << "Successfully overwrote " << old_file << " with " << new_file << std::endl;
+}
+void OverwriteOldIndex(std::string old_disk_index_prefix, std::string new_disk_index_prefix){
+    std::vector<std::string> suffixes = {"_disk.index", "_pq_compressed.bin", "_disk.index.tags", "_pq_pivots.bin","_medoids.bin", "_centroids.bin"};
+    for(auto suffix: suffixes){
+        std::string old_file = old_disk_index_prefix + suffix;
+        std::string new_file = new_disk_index_prefix + suffix;
+        OverwriteOldFile(old_file,new_file);
+    }
+}
+template<typename T, typename TagT>
 void LSMVectorIndex<T, TagT>::TriggerMergeMemIndex(){
     if(this->mem_index->GetCurrentNumPoints()<=0){
         return;
@@ -227,51 +291,16 @@ void LSMVectorIndex<T, TagT>::TriggerMergeMemIndex(){
     MergeMemIndex(save_path);
     diskann::cout << "Merge time : " << timer.elapsed()/1000 << " ms" << std::endl;
 
-    // Merge完以后，将之前的index进行clear
+    // Merge完以后，将内存索引进行clear
     this->mem_index->ClearIndex(prev_idx);
-    
-}
-template<typename T, typename TagT>
-std::unique_ptr<Level0Merger<T, TagT>> LSMVectorIndex<T, TagT>::ConstructLevel0Merger(){
-    std::shared_ptr<diskann::Parameters> param = this->disk_indexes[0]->GetParameter();
-    uint32_t range = param->Get<unsigned>("R");
-    uint32_t l_index = param->Get<unsigned>("L");
-    uint32_t maxc = param->Get<unsigned>("C");
-    float alpha = param->Get<float>("alpha");
-    std::unique_ptr<Level0Merger<T, TagT>> merger = std::make_unique<Level0Merger<T, TagT>>((uint32_t) this->dimension, this->dist_comp, this->dist_metric, (uint32_t) this->beamwidth, range, l_index, alpha, maxc, this->is_single_file_index);
-
-    return merger;
-}
-void OverwriteOldFile(std::string& old_file, std::string& new_file){
-    // Check if the new file exists
-    if (!file_exists(new_file)) {
-        diskann::cout << "Error: New disk index file does not exist." << std::endl;
-        return;
-    }
-
-    // Check if the old file exists, if it does, remove it
-    if (file_exists(old_file)) {
-        delete_file(old_file);
-    }
-
-    // Rename the new file to the old file's name (overwrite the old one)
-    rename_file(old_file, new_file);
-
-    diskann::cout << "Successfully overwrote " << old_file << " with " << new_file << std::endl;
-}
-void OverwriteOldIndex(std::string old_disk_index_prefix, std::string new_disk_index_prefix){
-    std::vector<std::string> suffixes = {"_disk.index", "_pq_compressed.bin", ".tags", "_pq_pivots.bin","_medoids.bin", "_centroids.bin"};
-    for(auto suffix: suffixes){
-        std::string old_file = old_disk_index_prefix + suffix;
-        std::string new_file = new_disk_index_prefix + suffix;
-        OverwriteOldFile(old_file,new_file);
-    }
+    // 将落盘的内存索引文件删除
+    removeOldMemIndex(save_path);
 }
 template<typename T, typename TagT>
 void LSMVectorIndex<T, TagT>::MergeMemIndex(std::string mem_index_path){
     std::string in_disk_index_prefix = this->disk_indexes[0]->GetIndexPrefix();
     std::string out_disk_index_prefix = in_disk_index_prefix +"_merge";
-    std::string tmp_folder = this->working_dir + "/tmp";
+    std::string tmp_folder = this->working_dir + "/tmp/";
     // 构建一个level0Merger并进行Merge
     std::unique_ptr<Level0Merger<T, TagT>> merger = this->ConstructLevel0Merger();
     
@@ -296,6 +325,71 @@ void LSMVectorIndex<T, TagT>::MergeMemIndex(std::string mem_index_path){
         expected_value = true;
         this->switching_disk.compare_exchange_strong(expected_value,false);
     }
+}
+template<typename T, typename TagT>
+void LSMVectorIndex<T, TagT>::TriggerMergeDiskIndex(int level){
+    if(level < 1){
+        diskann::cout  << "merge level must > 1" << std::endl;
+        return;
+    }
+    if(this->disk_indexes[level-1]->GetCurrentNumPoints()<=0){
+        return;
+    }
+    //start timer
+    diskann::Timer timer;
+
+    MergeDiskIndex(level, level + 1);
+
+    diskann::cout << "Merge time : " << timer.elapsed()/1000 << " ms" << std::endl;
+
+}
+template<typename T, typename TagT>
+void LSMVectorIndex<T, TagT>::MergeDiskIndex(int from_level, int to_level){
+    // 获取合并涉及文件索引前缀名
+    std::string from_disk_index_prefix = this->disk_indexes[from_level-1]->GetIndexPrefix();
+    std::string to_disk_index_prefix = this->disk_indexes[to_level-1]->GetIndexPrefix();
+    std::string out_disk_index_prefix = to_disk_index_prefix +"_merge";
+    std::string tmp_folder = this->working_dir + "/tmp/";
+
+    // 构建一个levelNMerger并进行Merge
+    std::unique_ptr<LevelNMerger<T, TagT>> merger = this->ConstructLevelNMerger(to_level);
+    merger->merge(to_disk_index_prefix.c_str(), {from_disk_index_prefix}, out_disk_index_prefix.c_str(), this->deleted_tags_vector, tmp_folder);
+    diskann::cout << "Merge done" << std::endl;
+
+    // 进行合并后的磁盘索引的替换
+    {
+        std::unique_lock<std::shared_timed_mutex> to_lock(*(this->disk_locks[to_level-1]));
+        std::unique_lock<std::shared_timed_mutex> from_lock(*(this->disk_locks[from_level-1]));
+        bool expected_value = false;
+        if (this->switching_disk.compare_exchange_strong(expected_value, true)) {
+            diskann::cout << "Switching to latest merged disk index " << std::endl;
+        } else {
+            diskann::cout << "Failed to switch" << std::endl;
+        }
+        // 删除from索引
+        removeOldDiskIndex(from_disk_index_prefix);
+        this->disk_indexes[from_level-1]->ClearIndex();
+
+        // 删除to原本的索引，并将新索引重命名
+        OverwriteOldIndex(to_disk_index_prefix, out_disk_index_prefix);
+        // 重新加载数据
+        std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> pqFlashIndexPtr = std::dynamic_pointer_cast<lsmidx::PQFlashIndexProxy<T, TagT>>(this->disk_indexes[to_level-1]);
+        pqFlashIndexPtr->ReloadIndex(to_disk_index_prefix);
+        // 将switching_disk切换回去
+        expected_value = true;
+        this->switching_disk.compare_exchange_strong(expected_value,false);
+    }
+}
+template<typename T, typename TagT>
+std::unique_ptr<LevelNMerger<T, TagT>> LSMVectorIndex<T, TagT>::ConstructLevelNMerger(int to_level){
+    std::shared_ptr<diskann::Parameters> param = this->disk_indexes[to_level-1]->GetParameter();
+    uint32_t range = param->Get<unsigned>("R");
+    uint32_t l_index = param->Get<unsigned>("L");
+    uint32_t maxc = param->Get<unsigned>("C");
+    float alpha = param->Get<float>("alpha");
+    std::unique_ptr<LevelNMerger<T, TagT>> merger = std::make_unique<LevelNMerger<T, TagT>>((uint32_t) this->dimension, this->dist_comp, this->dist_metric, (uint32_t) this->beamwidth, range, l_index, alpha, maxc, this->is_single_file_index);
+
+    return merger;
 }
 // template class instantiations
   template class LSMVectorIndex<float, uint32_t>;

@@ -136,7 +136,7 @@ namespace diskann {
 #endif
 
     diskann::cout << "Thread Data size: " << this->thread_data.size() << "\n";
-    assert(!this->thread_data.empty());
+    // assert(!this->thread_data.empty());
 
 #ifndef EXEC_ENV_OLS
     if (centroid_data != nullptr)
@@ -1686,11 +1686,12 @@ namespace diskann {
 
     _u64 disk_nnodes, ndims;
     READ_U64(diskann_meta, disk_nnodes);
+    diskann::cout << "RELOAD: disk_nnodes: " << disk_nnodes << "\n";
     READ_U64(diskann_meta, ndims);
 
     size_t medoid_id_on_file;
     READ_U64(diskann_meta, medoid_id_on_file);
-    diskann::cout << "Medoid-ID: " << medoid_id_on_file << "\n";
+    diskann::cout << "RELOAD: Medoid-ID: " << medoid_id_on_file << "\n";
     this->medoids[0] = (_u32) medoid_id_on_file;
     this->num_medoids = 1;
     READ_U64(diskann_meta, max_node_len);

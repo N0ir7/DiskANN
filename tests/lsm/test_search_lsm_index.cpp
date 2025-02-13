@@ -205,6 +205,7 @@ void run_all_iters(const std::string working_dir, const std::string index_name, 
   
   lsmidx::LSMVectorIndex<T, TagT>  lsm_index(options, working_dir, index_name, dist_cmp);
   tsl::robin_set<uint32_t> active_tags;
+  std::cout << "【 Load Active Tags 】" << std::endl;
   lsm_index.GetActiveTags(active_tags);
   std::cout << "Loaded " << active_tags.size() << " tags" << std::endl;
   for (size_t i = 0; i < n_iters; i++) {

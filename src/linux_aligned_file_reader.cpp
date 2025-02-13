@@ -7,7 +7,7 @@
 #include <iostream>
 #include "tsl/robin_map.h"
 #include "utils.h"
-#define MAX_EVENTS 1024
+#define MAX_EVENTS 512
 
 namespace {
   typedef struct io_event io_event_t;
@@ -111,7 +111,8 @@ io_context_t &LinuxAlignedFileReader::get_ctx() {
 }
 
 void LinuxAlignedFileReader::register_thread() {
-  auto                         my_id = std::this_thread::get_id();
+  auto my_id = std::this_thread::get_id();
+  std::cout << "register for thread id : " << my_id << std::endl;
   std::unique_lock<std::mutex> lk(ctx_mut);
   if (ctx_map.find(my_id) != ctx_map.end()) {
     return;

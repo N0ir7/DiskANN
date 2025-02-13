@@ -50,7 +50,7 @@ class DiskIndexDataIterator{
     // 移动构造函数
     DiskIndexDataIterator(DiskIndexDataIterator&& other) noexcept
         : index_file_meta_(std::move(other.index_file_meta_)),
-          output_writer_(std::move(other.output_writer_)),
+          output_index_file_meta_(std::move(other.output_index_file_meta_)),
           index_(std::move(other.index_)),
           disk_nodes_(std::move(other.disk_nodes_)),
           local_offset_(other.local_offset_),
@@ -59,6 +59,8 @@ class DiskIndexDataIterator{
           node_need_flush_back_(other.node_need_flush_back_),
           pq_need_flush_back_(other.pq_need_flush_back_),
           tag_need_flush_back_(other.tag_need_flush_back_),
+          read_only_(other.read_only_),
+          read_write_same_file_(other.read_write_same_file_),
           buf_(other.buf_) {
         other.buf_ = nullptr; // 防止悬空指针
     }
@@ -70,7 +72,7 @@ class DiskIndexDataIterator{
     DiskIndexDataIterator& operator=(DiskIndexDataIterator&& other) noexcept {
         if (this != &other) {
             index_file_meta_ = std::move(other.index_file_meta_);
-            output_writer_ = std::move(other.output_writer_);
+            output_index_file_meta_ = std::move(other.output_index_file_meta_);
             index_ = std::move(other.index_);
             disk_nodes_ = std::move(other.disk_nodes_);
             local_offset_ = other.local_offset_;
@@ -79,13 +81,15 @@ class DiskIndexDataIterator{
             node_need_flush_back_ = other.node_need_flush_back_;
             pq_need_flush_back_ = other.pq_need_flush_back_;
             tag_need_flush_back_ = other.tag_need_flush_back_;
+            read_only_ = other.read_only_;
+            read_write_same_file_ = other.read_write_same_file_;
             buf_ = other.buf_;
             other.buf_ = nullptr;
         }
         return *this;
     }
     
-    void Init(bool read_only, std::string output_data_path = "");
+    void Init(bool read_only, DiskIndexFileMeta* output_index_file_meta = nullptr);
     std::tuple<diskann::DiskNode<T> *, uint8_t *, TagT*> Next();
     std::tuple<std::vector<diskann::DiskNode<T>> *,uint8_t *, TagT*> NextBatch();
     bool HasNext();
@@ -97,7 +101,7 @@ class DiskIndexDataIterator{
     void NotifyTagFlushBack();
   private:
     DiskIndexFileMeta index_file_meta_;
-    std::unique_ptr<std::ofstream> output_writer_;
+    DiskIndexFileMeta output_index_file_meta_;
     std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index_;
     std::vector<diskann::DiskNode<T>> disk_nodes_;
     uint32_t local_offset_ = 0;
@@ -106,6 +110,8 @@ class DiskIndexDataIterator{
     bool node_need_flush_back_ = false;
     bool pq_need_flush_back_ = false;
     bool tag_need_flush_back_ = false;
+    bool read_only_ = true; 
+    bool read_write_same_file_ = true; 
     char * buf_ = nullptr;
     void NodeFlushBack();
     void PQCoordFlushBack();
@@ -113,6 +119,6 @@ class DiskIndexDataIterator{
     void DumpToDisk(const uint32_t start_id,
                     const char *   buf,
                     const uint32_t n_sectors,
-                    std::ofstream & output_writer);
+                    std::string data_path);
 };
 } // namespace lsmidx

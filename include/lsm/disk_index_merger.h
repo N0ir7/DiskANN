@@ -33,13 +33,13 @@ class DiskIndexMerger{
     DiskIndexFileMeta meta;
     tsl::robin_set<unsigned> delete_local_id_set;
     tsl::robin_set<uint32_t>  free_local_ids;
-    std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index;
     diskann::GraphDelta * delta;
     diskann::Metric dist_metric;
     diskann::Distance<T> * dist_cmp;
     DiskIndexParam param;
     std::shared_ptr<AlignedFileReader> reader;
-    DiskIndexMerger(DiskIndexFileMeta meta):meta(meta),index(nullptr),delta(nullptr){};
+    std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index;
+    DiskIndexMerger(DiskIndexFileMeta meta):meta(meta),delta(nullptr),index(nullptr){};
 
     // 创建一个新的 PQFlashIndex 对象，负责需要merge的磁盘索引的操作
     void InitIndex();
@@ -56,7 +56,7 @@ class DiskIndexMerger{
                         tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods,
                         std::vector<uint8_t *>& thread_bufs);
     
-    void ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list);
+    void ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list, DiskIndexDataIterator<T, TagT>& index_data_iter);
 
     void ProcessPatch(DiskIndexFileMeta& final_index_file_meta, std::vector<uint8_t *>& thread_bufs);
 
@@ -136,8 +136,12 @@ class DiskIndexMerger{
     }
     DiskIndexDataIterator<T, TagT> GetIterator();
     bool IsFree(uint32_t local_id);
+    void BookId(uint32_t local_id);
+    void WriteDataFileHeaderAfterInsertPhase();
+    bool TagExist(TagT tag);
+    void TagInfo();
   private:
-    void ConsolidateDeletes(diskann::DiskNode<T> &disk_node, uint8_t * scratch, tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods);
+    bool ConsolidateDeletes(diskann::DiskNode<T> &disk_node, uint8_t * scratch, tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods);
     /**
      * Predicate Functions
     */
@@ -158,6 +162,7 @@ class DiskIndexMerger{
                                             std::vector<diskann::Neighbor> &result, 
                                             std::vector<float> &occlude_factor);
     void WriteDataFileHeaderAfterDeletePhase(std::string data_path,tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods);
+    void WriteDataFileHeaderAfterPatchPhase(std::string data_path);
 };
 
 } // namespace lsmidx

@@ -48,6 +48,8 @@ diskann::Timer        global_timer;
 std::string           all_points_file;
 bool                  save_index_as_one_file;
 bool                  search_only;
+bool                  merge_only;
+bool                  insert_only;
 std::string           TMP_FOLDER;
 std::string           query_file = "";
 std::string           truthset_file = "";
@@ -661,15 +663,22 @@ void run_all_iters(std::string base_prefix, std::string merge_prefix,
   for (size_t i = 0; i < n_iters; i++) {
     std::cout << "ITER : " << i << std::endl;
     if (::search_only) {
-      merge_insert._mem_index_0->load(mem_prefix.c_str());
-      tsl::robin_set<uint32_t> mem_active_tags;
-      merge_insert._mem_index_0->get_active_tags(mem_active_tags);
-      for (auto iter : mem_active_tags) {
-        if (active_tags.find(iter) != active_tags.end()) {
-          active_tags.insert(iter);
+      if (file_exists(mem_prefix)) {
+        merge_insert._mem_index_0->load(mem_prefix.c_str());
+        tsl::robin_set<uint32_t> mem_active_tags;
+        merge_insert._mem_index_0->get_active_tags(mem_active_tags);
+        for (auto iter : mem_active_tags) {
+          if (active_tags.find(iter) != active_tags.end()) {
+            active_tags.insert(iter);
+          }
         }
       }
       run_search_iter(merge_insert, active_tags);
+    } else if (::merge_only) {
+      merge_insert._mem_index_0->load(mem_prefix.c_str());
+      merge_insert._mem_points = merge_insert._mem_index_0->get_num_points();
+      merge_kernel<T>(merge_insert);
+      break;
     } else {
       run_iter<T>(merge_insert, mem_prefix, active_tags, inactive_tags);
     }
@@ -704,7 +713,7 @@ int main(int argc, char **argv) {
               << " <full_data_bin> <single_file[0/1]> <query_bin> <truthset>"
               << " <n_iters> <total_insert_count> <total_delete_count> <range> "
                  "<recall_k> "
-                 "<search_only> "
+                 "<search/merge/insert_only> (0: search; 1: merge; 2: insert)"
                  "<search_L1> <search_L2> <search_L3> ...."
               << "\n WARNING: Other parameters set inside CPP source."
               << std::endl;
@@ -734,7 +743,7 @@ int main(int argc, char **argv) {
   uint32_t    delete_count = (uint32_t) atoi(argv[arg_no++]);
   uint32_t    range = (uint32_t) atoi(argv[arg_no++]);
   uint32_t    recall_k = (uint32_t) atoi(argv[arg_no++]);
-  int         search_only = atoi(argv[arg_no++]);
+  int         which_only = atoi(argv[arg_no++]);
 
   for (int ctr = arg_no; ctr < argc; ctr++) {
     _u32 curL = std::atoi(argv[ctr]);
@@ -767,10 +776,16 @@ int main(int argc, char **argv) {
   else
     ::save_index_as_one_file = false;
 
-  if (search_only == 1)
+  ::search_only = false;
+  ::merge_only = false;
+  ::insert_only = false;
+  if (which_only == 1)
     ::search_only = true;
-  else
-    ::search_only = false;
+  else if (which_only == 0) {
+    ::merge_only = true;
+  } else if (which_only == -1) {
+    ::insert_only = true;
+  }
 
   std::string active_tags_filename;
   if (single_file)

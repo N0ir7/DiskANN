@@ -1079,9 +1079,14 @@ void Level0Merger<T, TagT>::process_merges() {
       }
       counts += lcounts;
     }
-
-    cur_offset += SECTORS_PER_MERGE * SECTOR_LEN;
-    output_writer.write(buf, SECTORS_PER_MERGE * SECTOR_LEN);
+    // 最后一块：计算实际需要写入的大小
+    uint64_t write_sector = ROUND_UP(new_start_id - start_id, nnodes_per_sector) / nnodes_per_sector;
+    uint64_t bytes_to_write = std::min(write_sector * SECTOR_LEN, SECTORS_PER_MERGE * SECTOR_LEN);
+    
+    cur_offset += bytes_to_write;
+    output_writer.write(buf, bytes_to_write);
+    diskann::cout << " write " << bytes_to_write
+                  << " bytes\n";
     diskann::cout << new_start_id << " / " << this->disk_npts
                   << " nodes processed.\n";
     start_id = new_start_id;

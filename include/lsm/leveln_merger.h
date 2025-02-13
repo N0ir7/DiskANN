@@ -45,12 +45,11 @@ class LevelNMerger : public LevelMerger<T, TagT> {
                 const std::vector<std::string> &src_index_paths,
                 const char * out_disk_index_path,
                 std::string  &working_folder);
-    void WriteIntermediateIndexFile(DiskIndexFileMeta& src_index_file_meta,
-                                    DiskIndexFileMeta& temp_index_file_meta,
+    void ExpandIntermediateIndexFile(DiskIndexFileMeta& temp_index_file_meta,
                                     uint32_t new_max_pts);
     bool CopyAndExpandFile(const std::string& srcPath, const std::string& destPath, std::streamsize expansionSize);
     bool CopyFile(const std::string& srcPath, const std::string& destPath);
-
+    bool ExpandFile(const std::string& filePath, std::streamsize targetSize);
     uint32_t ComputeNewMaxPts();
 
     // deletes
