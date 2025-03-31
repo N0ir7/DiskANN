@@ -2312,6 +2312,12 @@ namespace diskann {
     consolidate_deletes(parameters);
     compact_data();
   }
+  template<typename T, typename TagT>
+  void Index<T, TagT>::consolidate_for_flush(Parameters &parameters) {
+    consolidate_deletes(parameters);
+    compact_data();
+    compact_frozen_point();
+  }
   /**
    * 冻结点（frozen point）从图的最大位置 _max_points
    * 迁移到当前数据点的下一个位置 _nd
@@ -2764,8 +2770,7 @@ namespace diskann {
                 << " location  == -1. Waiting for unique_lock. " << std::endl
                 << std::flush;
       lock.unlock();
-      std::unique_lock<std::shared_timed_mutex> growth_lock(
-          _update_lock);  // TODO: 这里能不能直接锁升级?
+      std::unique_lock<std::shared_timed_mutex> growth_lock(_update_lock);
 
       std::cout << "Thread: " << std::this_thread::get_id()
                 << " Obtained unique_lock. " << std::endl;
@@ -3054,7 +3059,18 @@ namespace diskann {
                      "------------"
                   << std::endl;
   }
-
+  template<typename T, typename TagT>
+  std::string Index<T, TagT>::status_str() const {
+    std::ostringstream oss;
+    oss << "Number of points: " << _nd << "; "
+        << "max points: " << _max_points << "; "
+        << "Graph size: " << _final_graph.size() << "; "
+        << "Location to tag size: " << _location_to_tag.size() << "; "
+        << "Tag to location size: " << _tag_to_location.size() << "; "
+        << "Number of empty slots: " << _empty_slots.size() << "; "
+        << "Data compacted: " << this->_data_compacted << "; ";
+    return oss.str();
+  }
   /*  Internals of the library */
   // EXPORTS
   template DISKANN_DLLEXPORT class Index<float, int32_t>;

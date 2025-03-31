@@ -1,11 +1,11 @@
 #pragma once
 
-#include "lsm/level_merger.h"
+#include "lsm/merger/level_merger.h"
 
 namespace lsmidx {
 
 template<typename T, typename TagT = uint32_t>
-class Level0Merger : public LevelMerger<T, TagT> {
+class Mem2Level1Merger : public LevelMerger<T, TagT> {
   public:
     /**
      * constructor to read a constructed index, allocated IDs
@@ -20,7 +20,7 @@ class Level0Merger : public LevelMerger<T, TagT> {
      *  l_index : L param for indexing
      *  maxc : max num of candidates to consider while pruning
     */
-    Level0Merger(const uint32_t ndims, diskann::Distance<T> *dist,
+    Mem2Level1Merger(const uint32_t ndims, diskann::Distance<T> *dist,
                                         diskann::Metric dist_metric,
                                       const uint32_t beam_width,
                                       const uint32_t range,
@@ -28,7 +28,7 @@ class Level0Merger : public LevelMerger<T, TagT> {
                                       const uint32_t maxc,
                                       bool           single_file_index);
 
-    ~Level0Merger();
+    ~Mem2Level1Merger();
 
     void merge(const char * dist_disk_index_path,
                 const std::vector<std::string> &src_index_paths,

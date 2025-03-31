@@ -14,21 +14,25 @@
 #define INDEX_OFFSET (uint64_t)(MAX_PTS_PER_MEM_INDEX * 4)
  
 // MAX_INSERT_THREADS <= NUM_INDEX_LOAD_THREADS
-#define MAX_INSERT_THREADS (uint64_t) 18
+#define MAX_INSERT_THREADS (uint64_t) 16
 // MAX_N_THREADS <= NUM_INDEX_LOAD_THREADS
-#define MAX_N_THREADS (uint64_t) 18
-#define NUM_INDEX_LOAD_THREADS (uint64_t) 18
+#define MAX_N_THREADS (uint64_t) 16
+#define NUM_INDEX_LOAD_THREADS (uint64_t) 16
 #define PER_THREAD_BUF_SIZE (uint64_t)(65536 * 64 * 4)
 #define PQ_FLASH_INDEX_MAX_NODES_TO_CACHE 200000
 namespace lsmidx{
 namespace config {
   const int mem_indexes_num = 2;
-  const int level0_merge_thresh = 1 << 14; // 16K(half of MAX_PTS_PER_MEM_INDEX_IN_MOTIVATION)
+  const int mem_merge_thresh = 1 << 14; // 16K(half of MAX_PTS_PER_MEM_INDEX_IN_MOTIVATION)
+  const int level0_merge_index_num_thresh = 3; // level0 index number
+  const int level0_indexes_num = 5; // level0 index number
   const int num_levels = 2;
-  const int leveln_merge_thresh[3] = {10 * level0_merge_thresh, 20 * level0_merge_thresh, 100 * level0_merge_thresh}; // todo: 确定阈值
+  const int leveln_merge_thresh[3] = {10 * mem_merge_thresh, 20 * mem_merge_thresh, 100 * mem_merge_thresh}; // todo: 确定阈值
   const std::string mem_index_name = "mem_index";
-  const std::vector<std::string> leveln_index_names = {"level1", "level2", "level3"};
+  const std::string level0_index_name = "level0";
+  const std::vector<std::string> leveln_index_names = {"level0","level1", "level2", "level3"};
 }  // namespace config
+
 typedef struct BuildOptions {
   diskann::Parameters params;
   diskann::Metric dist_metric;

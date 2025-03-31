@@ -29,6 +29,7 @@ typedef int FileHandle;
 #include "common_includes.h"
 #include "tsl/robin_set.h"
 #include "utils.h"
+#include "index.h"
 #include "windows_customizations.h"
 
 namespace diskann {
@@ -113,4 +114,12 @@ namespace diskann {
       const std::string &tag_file, const std::string &pq_pivots_file,
       const std::string &pq_compressed_vectors_file, bool single_file_index,
       const std::string &output_file);
+  template<typename T, typename TagT = uint32_t>
+  DISKANN_DLLEXPORT void create_disk_layout(
+      std::shared_ptr<diskann::Index<T, TagT>>, bool single_file_index,
+      const std::string &output_file);
+  template<typename T, typename TagT = uint32_t>
+  DISKANN_DLLEXPORT bool convert_index_to_disk(
+      std::shared_ptr<diskann::Index<T, TagT>> index, bool single_file_index,
+      const std::string &index_prefix_path);
 }  // namespace diskann

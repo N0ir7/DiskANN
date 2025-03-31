@@ -32,7 +32,7 @@ typedef int FileHandle;
 #include "ann_exception.h"
 #include "common_includes.h"
 #include "windows_customizations.h"
-
+#include "tsl/robin_set.h"
 #ifdef EXEC_ENV_OLS
 #include "content_buf.h"
 #include "memory_mapped_files.h"
@@ -65,6 +65,88 @@ typedef uint16_t _u16;
 typedef int16_t  _s16;
 typedef uint8_t  _u8;
 typedef int8_t   _s8;
+template<typename T>
+inline void print_tags(const tsl::robin_set<T>& active_tags) {
+  if (active_tags.empty()) {
+    return;
+  }
+
+  auto it = active_tags.begin();
+  T    start = *it;
+  T    end = *it;
+  ++it;
+
+  for (; it != active_tags.end(); ++it) {
+    if (*it == end + 1) {
+      // 当前元素是前一个元素的连续值，更新结束值
+      end = *it;
+    } else {
+      // 不连续，输出当前范围
+      if (start == end) {
+        std::cout << start;
+      } else {
+        std::cout << start << "-" << end;
+      }
+      std::cout << ", ";
+      // 更新起始值和结束值
+      start = end = *it;
+    }
+  }
+
+  // 输出最后一个范围
+  if (start == end) {
+    std::cout << start;
+  } else {
+    std::cout << start << "-" << end;
+  }
+  std::cout << std::endl;
+}
+template<typename T>
+void print_tags_from_array(T* insert_nodes_tag_list, size_t size) {
+  if (size == 0) {
+    return;
+  }
+
+  // 复制数组元素到向量
+  std::vector<T> sorted_tags(insert_nodes_tag_list,
+                             insert_nodes_tag_list + size);
+  // 对向量进行排序
+  std::sort(sorted_tags.begin(), sorted_tags.end());
+
+  T start = sorted_tags[0];
+  T end = sorted_tags[0];
+
+  for (size_t i = 1; i < sorted_tags.size(); ++i) {
+    if (sorted_tags[i] == end + 1) {
+      // 如果当前元素是前一个元素的连续值，则更新结束值
+      end = sorted_tags[i];
+    } else {
+      // 如果不连续，则输出当前范围
+      if (start == end) {
+        std::cout << start;
+      } else {
+        std::cout << start << "-" << end;
+      }
+      std::cout << ", ";
+      // 更新起始值和结束值
+      start = end = sorted_tags[i];
+    }
+  }
+
+  // 输出最后一个范围
+  if (start == end) {
+    std::cout << start;
+  } else {
+    std::cout << start << "-" << end;
+  }
+  std::cout << std::endl;
+}
+inline void set_low_priority() {
+  struct sched_param param;
+  param.sched_priority = 0;  // SCHED_IDLE 必须设置为 0
+  int tid = gettid();
+  sched_setscheduler(tid, SCHED_BATCH, &param);
+}
 
 inline bool file_exists(const std::string& name, bool dirCheck = false) {
   int val;

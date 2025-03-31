@@ -207,10 +207,17 @@ void run_all_iters(const std::string working_dir, const std::string index_name, 
   tsl::robin_set<uint32_t> active_tags;
   std::cout << "【 Load Active Tags 】" << std::endl;
   lsm_index.GetActiveTags(active_tags);
+  // for(uint32_t i = 0; i < 132000;i++){
+  //   active_tags.insert(i);
+  // }
+  print_tags(active_tags);
   std::cout << "Loaded " << active_tags.size() << " tags" << std::endl;
+  int query_num = 0;
   for (size_t i = 0; i < n_iters; i++) {
     std::cout << "ITER : " << i << std::endl;
     run_search_iter(lsm_index, active_tags);
+    query_num+=10000*::Lvec.size();
+    lsm_index.ReportQueryInfo(query_num);
   }
 }
 int main(int argc, char** argv) {

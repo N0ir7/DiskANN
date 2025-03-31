@@ -21,9 +21,7 @@
 #include "pq_flash_index.h"
 #include "utils.h"
 
-#include "pq_flash_index.h"
 #include "tsl/robin_set.h"
-#include "utils.h"
 
 #define NUM_KMEANS 15
 
@@ -889,7 +887,130 @@ namespace diskann {
     }
     diskann::cout << "Output file written." << std::endl;
   }
+  template<typename T, typename TagT = uint32_t>
+  void create_disk_layout(std::shared_ptr<diskann::Index<T, TagT>> index,
+                          bool               single_file_index,
+                          const std::string &output_file) {
+    unsigned npts = index->_nd + index->_num_frozen_pts, ndims = index->_dim;
 
+    // amount to read or write in one shot
+    _u64            read_blk_size = 64 * 1024 * 1024;
+    _u64            write_blk_size = read_blk_size;
+    cached_ifstream base_reader;
+    std::ifstream   vamana_reader;
+    _u64            base_offset = 0, vamana_offset = 0, tags_offset = 0;
+    bool            tags_enabled = false;
+
+    size_t npts_64, ndims_64;
+    npts_64 = npts;
+    ndims_64 = ndims;
+    std::remove(output_file.c_str());
+    cached_ofstream diskann_writer;
+    diskann_writer.open(output_file, write_blk_size);
+    // metadata: width, medoid
+    unsigned width_u32 = index->_width, medoid_u32 = index->_ep;
+    _u64     vamana_frozen_num = index->_num_frozen_pts, vamana_frozen_loc = 0;
+    // compute
+    _u64 medoid, max_node_len, nnodes_per_sector;
+    npts_64 = (_u64) npts;
+    medoid = (_u64) medoid_u32;
+    if (vamana_frozen_num == 1)
+      vamana_frozen_loc = medoid;
+    max_node_len =
+        (((_u64) width_u32 + 1) * sizeof(unsigned)) + (ndims_64 * sizeof(T));
+    nnodes_per_sector = SECTOR_LEN / max_node_len;
+
+    diskann::cout << "medoid: " << medoid << "B" << std::endl;
+    diskann::cout << "max_node_len: " << max_node_len << "B" << std::endl;
+    diskann::cout << "nnodes_per_sector: " << nnodes_per_sector << "B"
+                  << std::endl;
+
+    // SECTOR_LEN buffer for each sector
+    std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(SECTOR_LEN);
+    std::unique_ptr<char[]> node_buf = std::make_unique<char[]>(max_node_len);
+    unsigned &nnbrs = *(unsigned *) (node_buf.get() + ndims_64 * sizeof(T));
+    unsigned *nhood_buf =
+        (unsigned *) (node_buf.get() + (ndims_64 * sizeof(T)) +
+                      sizeof(unsigned));
+
+    // number of sectors (1 for meta data)
+    _u64 n_sectors = ROUND_UP(npts_64, nnodes_per_sector) / nnodes_per_sector;
+    _u64 disk_index_file_size = (n_sectors + 1) * SECTOR_LEN;
+
+    std::vector<_u64> output_file_meta;
+    output_file_meta.push_back(npts_64);
+    output_file_meta.push_back(ndims_64);
+    output_file_meta.push_back(medoid);
+    output_file_meta.push_back(max_node_len);
+    output_file_meta.push_back(nnodes_per_sector);
+    output_file_meta.push_back(vamana_frozen_num);
+    output_file_meta.push_back(vamana_frozen_loc);
+    output_file_meta.push_back(disk_index_file_size);
+
+    diskann_writer.write(sector_buf.get(), SECTOR_LEN);  // write out the empty
+                                                         // first sector, will
+                                                         // be populated at the
+                                                         // end.
+
+    diskann::cout << "# sectors: " << n_sectors << std::endl;
+    _u64 cur_node_id = 0;
+    for (_u64 sector = 0; sector < n_sectors; sector++) {
+      if (sector % 100000 == 0) {
+        diskann::cout << "Sector #" << sector << "written" << std::endl;
+      }
+      memset(sector_buf.get(), 0, SECTOR_LEN);
+      for (_u64 sector_node_id = 0;
+           sector_node_id < nnodes_per_sector && cur_node_id < npts_64;
+           sector_node_id++) {
+        memset(node_buf.get(), 0, max_node_len);
+        // read cur node's nnbrs
+        nnbrs = (*(index->get_graph()))[cur_node_id].size();
+        // sanity checks on nnbrs
+        if (nnbrs == 0) {
+          diskann::cout << "ERROR. Found point with no out-neighbors; Point#: "
+                        << cur_node_id << std::endl;
+          exit(-1);
+        }
+
+        // read node's nhood
+        memcpy((char *) nhood_buf,
+               (char *) (*(index->get_graph()))[cur_node_id].data(),
+               (std::min)(nnbrs, width_u32) * sizeof(unsigned));
+
+        // write coords of node first
+        memcpy(node_buf.get(),
+               (char *) (index->_data + cur_node_id * index->_aligned_dim),
+               ndims_64 * sizeof(T));
+
+        // write nnbrs
+        *(unsigned *) (node_buf.get() + ndims_64 * sizeof(T)) =
+            (std::min)(nnbrs, width_u32);
+
+        // write nhood next
+        memcpy(node_buf.get() + ndims_64 * sizeof(T) + sizeof(unsigned),
+               nhood_buf, (std::min)(nnbrs, width_u32) * sizeof(unsigned));
+
+        // get offset into sector_buf
+        char *sector_node_buf =
+            sector_buf.get() + (sector_node_id * max_node_len);
+
+        // copy node buf into sector_node_buf
+        memcpy(sector_node_buf, node_buf.get(), max_node_len);
+        cur_node_id++;
+      }
+      // flush sector to disk
+      diskann_writer.write(sector_buf.get(), SECTOR_LEN);
+    }
+    diskann_writer.close();
+    // save tags
+    size_t tag_bytes_written = 0;
+    index->save_tags(output_file + std::string(".tags"));
+
+    output_file_meta.push_back(output_file_meta[output_file_meta.size() - 1] +
+                               tag_bytes_written);
+    diskann::save_bin<_u64>(output_file, output_file_meta.data(),
+                            output_file_meta.size(), 1, 0);
+  }
   template<typename T, typename TagT>
   bool build_disk_index(const char *dataPath, const char *indexFilePath,
                         const char     *indexBuildParameters,
@@ -1073,7 +1194,77 @@ namespace diskann {
     diskann::cout << "Indexing time: " << diff.count() << std::endl;
     return true;
   }
+  template<typename T, typename TagT>
+  bool convert_index_to_disk(std::shared_ptr<diskann::Index<T, TagT>> index,
+                             bool               single_file_index,
+                             const std::string &index_prefix_path) {
+    auto        s = std::chrono::high_resolution_clock::now();
+    std::string pq_pivots_path = index_prefix_path + "_pq_pivots.bin";
+    std::string pq_compressed_vectors_path =
+        index_prefix_path + "_pq_compressed.bin";
+    std::string disk_index_path = index_prefix_path + "_disk.index";
+    std::string medoids_path = disk_index_path + "_medoids.bin";
+    std::string centroids_path = disk_index_path + "_centroids.bin";
+    std::string sample_base_prefix = index_prefix_path + "_sample";
+    size_t points_num = index->_nd + index->_num_frozen_pts, dim = index->_dim;
+    auto   training_set_size =
+        PQ_TRAINING_SET_FRACTION / 2 * points_num > MAX_PQ_TRAINING_SET_SIZE
+              ? MAX_PQ_TRAINING_SET_SIZE
+              : (_u32) std::round(PQ_TRAINING_SET_FRACTION / 2 * points_num);
+    training_set_size = (training_set_size == 0) ? 1 : training_set_size;
+    diskann::cout << "Index has: " << points_num
+                  << " points. Changing training set size to "
+                  << training_set_size << " points" << std::endl;
+    double final_index_ram_limit = get_memory_budget(100);  // 100GB
+    size_t num_pq_chunks =
+        calculate_num_pq_chunks(final_index_ram_limit, points_num, dim);
 
+    size_t train_size, train_dim = dim;
+    float *train_data;
+
+    auto   start = std::chrono::high_resolution_clock::now();
+    double p_val = ((double) training_set_size / (double) points_num);
+    // generates random sample and sets it to train_data and updates train_size
+    gen_random_slice<T>(index->_data, points_num, dim, p_val, train_data,
+                        train_size);
+
+    diskann::cout << "Generating PQ pivots with training data of size: "
+                  << train_size << " num PQ chunks: " << num_pq_chunks
+                  << std::endl;
+    int num_centers = 256;
+    generate_pq_pivots(train_data, train_size, (uint32_t) train_dim,
+                       num_centers, (uint32_t) num_pq_chunks, NUM_KMEANS,
+                       pq_pivots_path);
+    auto end = std::chrono::high_resolution_clock::now();
+
+    diskann::cout << "Pivots generated in "
+                  << std::chrono::duration<double>(end - start).count() << "s."
+                  << std::endl;
+    start = std::chrono::high_resolution_clock::now();
+    generate_pq_data_from_pivots<T>(index->_data, points_num, dim, num_centers,
+                                    (uint32_t) num_pq_chunks, pq_pivots_path,
+                                    pq_compressed_vectors_path);
+    delete[] train_data;
+    train_data = nullptr;
+
+    diskann::create_disk_layout<T, TagT>(index, single_file_index,
+                                         disk_index_path);
+
+    double ten_percent_points = std::ceil(points_num * 0.1);
+    double num_sample_points = ten_percent_points > MAX_SAMPLE_POINTS_FOR_WARMUP
+                                   ? MAX_SAMPLE_POINTS_FOR_WARMUP
+                                   : ten_percent_points;
+    double sample_sampling_rate = num_sample_points / points_num;
+    diskann::cout << "Generating warmup file with " << num_sample_points
+                  << " points using a sampling rate of: "
+                  << sample_sampling_rate << std::endl;
+    gen_random_slice<T>(index->_data, points_num, dim, sample_base_prefix,
+                        sample_sampling_rate);
+    auto                          e = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = e - s;
+    diskann::cout << "Convert Index time: " << diff.count() << std::endl;
+    return true;
+  }
   template DISKANN_DLLEXPORT void create_disk_layout<int8_t, uint32_t>(
       const std::string &mem_index_file, const std::string &base_file,
       const std::string &tag_file, const std::string &pq_pivots_file,
@@ -1104,6 +1295,34 @@ namespace diskann {
       const std::string &tag_file, const std::string &pq_pivots_file,
       const std::string &pq_compressed_vectors_file, bool single_file_index,
       const std::string &output_file);
+
+  template DISKANN_DLLEXPORT void create_disk_layout<int8_t, uint32_t>(
+      std::shared_ptr<diskann::Index<int8_t, uint32_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<uint8_t, uint32_t>(
+      std::shared_ptr<diskann::Index<uint8_t, uint32_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<float, uint32_t>(
+      std::shared_ptr<diskann::Index<float, uint32_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<int8_t, uint64_t>(
+      std::shared_ptr<diskann::Index<int8_t, uint64_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<uint8_t, uint64_t>(
+      std::shared_ptr<diskann::Index<uint8_t, uint64_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<float, uint64_t>(
+      std::shared_ptr<diskann::Index<float, uint64_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<int8_t, int64_t>(
+      std::shared_ptr<diskann::Index<int8_t, int64_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<uint8_t, int64_t>(
+      std::shared_ptr<diskann::Index<uint8_t, int64_t>> index,
+      bool single_file_index, const std::string &output_file);
+  template DISKANN_DLLEXPORT void create_disk_layout<float, int64_t>(
+      std::shared_ptr<diskann::Index<float, int64_t>> index,
+      bool single_file_index, const std::string &output_file);
 
   template DISKANN_DLLEXPORT int8_t *load_warmup<int8_t>(
       const std::string &cache_warmup_file, uint64_t &warmup_num,
@@ -1199,4 +1418,40 @@ namespace diskann {
       bool single_file_index, unsigned L, unsigned R, double sampling_rate,
       double ram_budget, std::string mem_index_path, std::string medoids_path,
       std::string centroids_file, const char *tag_file);
+
+  template bool convert_index_to_disk<int8_t, uint32_t>(
+      std::shared_ptr<diskann::Index<int8_t, uint32_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<uint8_t, uint32_t>(
+      std::shared_ptr<diskann::Index<uint8_t, uint32_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<float, uint32_t>(
+      std::shared_ptr<diskann::Index<float, uint32_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<int8_t, uint64_t>(
+      std::shared_ptr<diskann::Index<int8_t, uint64_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<uint8_t, uint64_t>(
+      std::shared_ptr<diskann::Index<uint8_t, uint64_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<float, uint64_t>(
+      std::shared_ptr<diskann::Index<float, uint64_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<int8_t, int64_t>(
+      std::shared_ptr<diskann::Index<int8_t, int64_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<uint8_t, int64_t>(
+      std::shared_ptr<diskann::Index<uint8_t, int64_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
+
+  template bool convert_index_to_disk<float, int64_t>(
+      std::shared_ptr<diskann::Index<float, int64_t>> index,
+      bool single_file_index, const std::string &index_prefix_path);
 };  // namespace diskann

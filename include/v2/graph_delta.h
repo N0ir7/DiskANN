@@ -22,6 +22,7 @@ namespace diskann {
 
       void rename_edges(const tsl::robin_map<uint32_t, uint32_t>& rename_map);
       void rename_edges(const std::function<uint32_t(uint32_t)> &rename_func);
+      void report();
     private:
       bool is_relevant(const uint32_t id);
       // in-memory graph

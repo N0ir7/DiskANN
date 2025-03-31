@@ -22,6 +22,10 @@ template<typename T>
 void gen_random_slice(const std::string base_file,
                       const std::string output_prefix, double sampling_rate,
                       size_t offset = 0);
+template<typename T>
+void gen_random_slice(const T *inputdata, size_t npts, size_t ndims,
+                      const std::string output_prefix, double sampling_rate,
+                      size_t offset = 0);
 
 template<typename T>
 void gen_random_slice(const std::string data_file, double p_val,
@@ -73,6 +77,12 @@ DISKANN_DLLEXPORT int generate_pq_pivots(const float *train_data,
 
 template<typename T>
 int generate_pq_data_from_pivots(const std::string data_file,
+                                 unsigned num_centers, unsigned num_pq_chunks,
+                                 std::string pq_pivots_path,
+                                 std::string pq_compressed_vectors_path,
+                                 size_t      offset = 0);
+template<typename T>
+int generate_pq_data_from_pivots(const T *inputdata, size_t npts, size_t ndims,
                                  unsigned num_centers, unsigned num_pq_chunks,
                                  std::string pq_pivots_path,
                                  std::string pq_compressed_vectors_path,

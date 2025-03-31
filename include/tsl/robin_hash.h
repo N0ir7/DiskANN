@@ -39,6 +39,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <mutex>
 #include "robin_growth_policy.h"
 
 
@@ -1251,8 +1252,14 @@ private:
      * Return an always valid pointer to an static empty bucket_entry with last_bucket() == true.
      */            
     bucket_entry* static_empty_bucket_ptr() {
-        static bucket_entry empty_bucket(true);
-        return &empty_bucket;
+        static std::once_flag flag;
+        // static bucket_entry empty_bucket(true);
+        // return &empty_bucket;
+        static bucket_entry* empty_bucket_ptr = nullptr;
+        std::call_once(flag, []() {
+            empty_bucket_ptr = new bucket_entry(true);
+        });
+        return empty_bucket_ptr;
     }
     
 private:

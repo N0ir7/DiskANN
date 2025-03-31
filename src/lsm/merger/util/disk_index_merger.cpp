@@ -1,22 +1,136 @@
-#include "lsm/disk_index_merger.h"
+#include "lsm/merger/util/disk_index_merger.h"
 #include "timer.h"
+// #include "aux_utils.h"
 #include <omp.h>
+// #include <iomanip>
 
 namespace lsmidx
 {
+// bool load2 = false;
+// unsigned   *gt_ids2 = nullptr;
+// uint32_t   *gt_tags2 = nullptr;
+// float      *gt_dists2 = nullptr;
+// size_t      gt_num2, gt_dim2;
+// template<typename T, typename TagT=uint32_t>
+// void test_index(std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index){
+//   tsl::robin_set<TagT> active_tags;
+//   std::cout << "【 Load Active Tags 】" << std::endl;
+//   index->get_active_tags(active_tags);
+//   print_tags(active_tags);
+//   std::cout << "Loaded " << active_tags.size() << " tags" << std::endl;
+//   uint64_t recall_at = 5;
+//   std::string query_file = "/home/hlqiu/data/sift/sift_query.bin";
+//   std::string truthset_file = "/home/hlqiu/data/sift/sift_groundtruth.bin";
+//   // hold data
+//   T        *query = nullptr;
+//   // unsigned *gt_ids = nullptr;
+//   // uint32_t *gt_tags = nullptr;
+//   // float    *gt_dists = nullptr;
+//   size_t    query_num, query_dim, query_aligned_dim;
+
+//   std::cout << "Loading query : " << query_file << std::endl;
+//   // load query + truthset
+//   diskann::load_aligned_bin<T>(query_file, query, query_num, query_dim,
+//                                query_aligned_dim);
+//   std::cout << "Loaded query : " << truthset_file << std::endl;
+//   // std::cout << "Loading gt : " << query_file << std::endl;
+//   // diskann::load_truthset(truthset_file, gt_ids, gt_dists, gt_num, gt_dim,
+//   //                        &gt_tags);
+//   // std::cout << "Loaded gt" << std::endl;
+//   if (!load2) {
+//     std::cout << "Loading truthset : " << truthset_file << std::endl;
+//     diskann::load_truthset(truthset_file, gt_ids2, gt_dists2, gt_num2,
+//                            gt_dim2, &gt_tags2);
+//     load2 = true;
+//   }
+//   // if (gt_num != query_num) {
+//   //   std::cout << "Error. Mismatch in number of queries and ground truth data"
+//   //             << std::endl;
+//   // }
+//   std::vector<uint32_t> query_result_ids;
+//   std::vector<TagT> query_result_tags;
+//   std::vector<float>    query_result_dists;
+//   query_result_ids.resize(recall_at * query_num);
+//   query_result_dists.resize(recall_at * query_num);
+//   query_result_tags.resize(recall_at * query_num);
+//   std::vector<uint32_t> query_result_ids_32(recall_at * query_num);
+
+//   diskann::QueryStats *stats = new diskann::QueryStats[query_num];
+//   uint32_t             L = 75;
+//   std::vector<double>  latency_stats(query_num, 0);
+//   auto                 s = std::chrono::high_resolution_clock::now();
+//   omp_set_max_active_levels(4);
+// #pragma omp parallel for num_threads(6)
+//   for (_s64 i = 0; i < (int64_t) query_num; i++) {
+//     auto qs = std::chrono::high_resolution_clock::now();
+//     index->cached_beam_search(query + (i * query_aligned_dim), recall_at, L,
+//                                (query_result_tags.data() + (i * recall_at)),
+//                                query_result_dists.data() + (i * recall_at),
+//                                4,
+//                                stats + i);
+//     auto qe = std::chrono::high_resolution_clock::now();
+
+//     std::chrono::duration<double> diff = qe - qs;
+//     latency_stats[i] = diff.count() * 1000;
+//     //      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+//   }
+//   auto                          e = std::chrono::high_resolution_clock::now();
+//   std::chrono::duration<double> diff = e - s;
+//   float qps = (float) (((double) query_num) / diff.count());
+//   // compute mean recall, IOs
+//   float mean_recall = 0.0f;
+//   std::vector<uint32_t> query_result_tags2;
+//   for(auto tag : query_result_tags){
+//     query_result_tags2.emplace_back(tag);
+//   }
+//   tsl::robin_set<uint32_t> active_tags2;
+//   for(auto tag : active_tags){
+//     active_tags2.insert(tag);
+//   }
+//   mean_recall = diskann::calculate_recall(
+//       (unsigned) query_num, gt_ids2, gt_dists2, (unsigned) gt_dim2,
+//       query_result_tags2.data(), (unsigned) recall_at, (unsigned) recall_at,
+//       active_tags2);
+//   //    mean_recall /= (float) query_num;
+//   float mean_ios = (float) diskann::get_mean_stats(
+//       stats, query_num,
+//       [](const diskann::QueryStats &stats) { return stats.n_ios; });
+//   std::sort(latency_stats.begin(), latency_stats.end());
+//   std::string recall_string = "Recall@" + std::to_string(recall_at);
+//     std::cout << std::setw(4) << "Ls" << std::setw(12) << "QPS "
+//               << std::setw(18) << "Mean Latency (ms)" << std::setw(12)
+//               << "90 Latency" << std::setw(12) << "95 Latency" << std::setw(12)
+//               << "99 Latency" << std::setw(12) << "99.9 Latency"
+//               << std::setw(12) << recall_string << std::setw(12)
+//               << "Mean disk IOs" << std::endl;
+//     std::cout
+//         << "==============================================================="
+//            "==============="
+//         << std::endl;
+//     std::cout << std::setw(4) << L << std::setw(12) << qps << std::setw(18)
+//             << ((float) std::accumulate(latency_stats.begin(),
+//                                         latency_stats.end(), 0)) /
+//                     (float) query_num
+//             << std::setw(12)
+//             << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
+//             << std::setw(12)
+//             << (float) latency_stats[(_u64) (0.95 * ((double) query_num))]
+//             << std::setw(12)
+//             << (float) latency_stats[(_u64) (0.99 * ((double) query_num))]
+//             << std::setw(12)
+//             << (float) latency_stats[(_u64) (0.999 * ((double) query_num))]
+//             << std::setw(12) << mean_recall << std::setw(12) << mean_ios
+//             << std::endl;
+//   delete[] stats;
+//   diskann::aligned_free(query);
+//   // delete[] gt_ids;
+//   // delete[] gt_dists;
+//   // delete[] gt_tags;
+// }
 template<typename T, typename TagT>
 void DiskIndexMerger<T,TagT>::InitIndexWithCache(){
   std::string index_prefix_path = this->meta.index_prefix_path;
-  this->reader = std::make_shared<LinuxAlignedFileReader>();
-  // 创建一个新的 PQFlashIndex 对象，负责磁盘索引的操作
-  diskann::cout << "Created PQFlashIndex inside disk_index_merger " << std::endl;
-  this->index = std::make_shared<diskann::PQFlashIndex<T, TagT>>(this->dist_metric, reader, this->meta.is_single_file, true);
-  
-  // 加载磁盘索引文件
-  diskann::cout << "Loading PQFlashIndex from file: " << index_prefix_path
-                << " into object: " << std::hex << (_u64) &
-      (this->index) << std::dec << std::endl;
-  this->index->load(index_prefix_path.c_str(),NUM_INDEX_LOAD_THREADS);
+  InitIndex();
 
   // 计算要缓存的节点数量，最多缓存 PQ_FLASH_INDEX_MAX_NODES_TO_CACHE 个节点
   uint32_t node_cache_count = 1 + (uint32_t) round(this->index->return_nd() * 0.01);
@@ -35,7 +149,6 @@ void DiskIndexMerger<T,TagT>::InitIndexWithCache(){
 template<typename T, typename TagT>
 void DiskIndexMerger<T,TagT>::InitIndex(){
   std::string index_prefix_path = this->meta.index_prefix_path;
-  this->reader = std::make_shared<LinuxAlignedFileReader>();
   // 创建一个新的 PQFlashIndex 对象，负责磁盘索引的操作
   diskann::cout << "Created PQFlashIndex inside disk_index_merger " << std::endl;
   this->index = std::make_shared<diskann::PQFlashIndex<T, TagT>>(this->dist_metric, reader, this->meta.is_single_file, true);
@@ -46,13 +159,21 @@ void DiskIndexMerger<T,TagT>::InitIndex(){
       (this->index) << std::dec << std::endl;
   this->index->load(index_prefix_path.c_str(),NUM_INDEX_LOAD_THREADS);
 }
-
+template<typename T, typename TagT>
+DiskIndexMerger<T,TagT>::~DiskIndexMerger(){
+  if(this->delta){
+    delete this->delta;
+  }
+}
 template<typename T, typename TagT>
 void DiskIndexMerger<T,TagT>::InitGraphDelta(uint64_t global_offset){
   this->delta = new diskann::GraphDelta(global_offset, this->num_points());
 }
 template<typename T, typename TagT>
 void DiskIndexMerger<T,TagT>::AddDeleteLocalID(tsl::robin_set<TagT>& deleted_tags){
+  if(deleted_tags.empty()){
+    return;
+  }
   TagT* disk_tags = this->tags();
   for (uint32_t i = 0; i < this->num_points(); i++) {
     TagT i_tag = disk_tags[i];
@@ -70,7 +191,9 @@ tsl::robin_map<uint32_t, std::vector<uint32_t>> DiskIndexMerger<T,TagT>::Populat
   char *delete_backing_buf = nullptr;
   std::vector<diskann::DiskNode<T>> deleted_nodes;
   tsl::robin_map<uint32_t, std::vector<uint32_t>> deleted_nhoods;
-
+  if(this->delete_local_id_set.empty()){
+    return deleted_nhoods;
+  }
   /**
    * 初始化两片内存缓冲区
    * 1.delete_backing_buf: 用来存储被删除点的未被删除邻居
@@ -88,12 +211,15 @@ tsl::robin_map<uint32_t, std::vector<uint32_t>> DiskIndexMerger<T,TagT>::Populat
 
   diskann::cout << "ALLOC: " << (delete_backing_buf_size >> 10)
                 << "KiB aligned buffer for deletes.\n";
-  
+  auto s = std::chrono::high_resolution_clock::now();
   // scan deleted nodes and get
   this->index->scan_deleted_nodes(this->delete_local_id_set, deleted_nodes,
                                         index_read_buf, delete_backing_buf,
                                         SECTORS_PER_MERGE);
-
+  auto e = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = e - s;
+  diskann::cout << "scan_deleted_nodes cost time: " << diff.count()*1000
+                << "ms.\n";
   // insert into deleted_nhoods
   deleted_nhoods.reserve(deleted_nodes.size());
   for (auto &nhood : deleted_nodes) {
@@ -164,9 +290,11 @@ void DiskIndexMerger<T,TagT>::ProcessDeletes(DiskIndexFileMeta& temp_index_file_
       index_data_iter.NotifyNodeFlushBack();
     }
   }
-  
+  index_data_iter.TryFlushBack();
+  double io_time = index_data_iter.GetIOTime();
   double e2e_time = ((double) delete_timer.elapsed()) / (1000000.0);
   diskann::cout << "Processed Deletes in " << e2e_time << " s." << std::endl;
+  diskann::cout << "read io cost time in DeletePhase " << io_time << " s." << std::endl;
   diskann::cout << "Examine: Found " 
                 << free_cnt
                 << " free nodes from SSD-DiskANN during delete phase\n";
@@ -397,19 +525,27 @@ bool DiskIndexMerger<T, TagT>::ConsolidateDeletes(diskann::DiskNode<T> &disk_nod
   return true;
 }
 template<typename T, typename TagT>
-void DiskIndexMerger<T, TagT>::ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list, DiskIndexDataIterator<T, TagT>& index_data_iter){
+void DiskIndexMerger<T, TagT>::ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list, DiskIndexDataIterator<T, TagT>& index_data_iter, tsl::robin_set<TagT>* delete_tag_set, int frozen_location){
 
     std::vector<diskann::ThreadData<T>>& disk_thread_data = this->thread_data();
     int target = insert_nodes.size();
     int progress = 0, insert_num = 0;
     diskann::cout<< "start insert, insert size: " << insert_nodes.size() << " nodes" << std::endl;
-
+    // print_tags_from_array<TagT>(insert_nodes_tag_list, insert_nodes.size());
     #pragma omp parallel for schedule(dynamic, 128) num_threads(MAX_N_THREADS)
     for(size_t i = 0; i < insert_nodes.size(); i++){
+      set_low_priority();
       diskann::DiskNode<T>& from_node = insert_nodes[i];
       const T* vec = from_node.coords;
       const uint32_t offset_id = from_node.id;
       TagT from_node_tag = insert_nodes_tag_list[i];
+      if(frozen_location != -1 && offset_id == frozen_location){
+        diskann::cout<<"ProcessInserts: found frozen point: "<< frozen_location<<" With tag: "<<from_node_tag<<std::endl;
+        continue;
+      }
+      if(delete_tag_set && delete_tag_set->count(from_node_tag)){
+        continue;
+      }
       // diskann::Timer timer;
       // float insert_time, find_time, copy_time;
       std::vector<diskann::Neighbor> pool;
@@ -422,7 +558,12 @@ void DiskIndexMerger<T, TagT>::ProcessInserts(std::vector<diskann::DiskNode<T>>&
       // prune neighbors using alpha
       std::vector<uint32_t> new_nhood;
       this->PruneNeighbors(coord_map, pool, new_nhood);
-
+      if (new_nhood.size() > this->range()) {
+        std::cout << "***ERROR*** After prune, for offset_id: " << offset_id << " found "
+                  << new_nhood.size() << " neighbors instead of range: " << this->range()
+                  << std::endl;
+      
+      }
       // insert_time = (float) timer.elapsed();
       // timer.reset();
       diskann::DiskNode<T>* to_node = nullptr;
@@ -446,6 +587,7 @@ void DiskIndexMerger<T, TagT>::ProcessInserts(std::vector<diskann::DiskNode<T>>&
         memcpy(to_node->coords, from_node.coords, this->ndim() * sizeof(T));
         // number of nhoods
         to_node->nnbrs =  new_nhood.size();
+        *(to_node->nbrs - 1) = to_node->nnbrs;
         // copy new nhoods
         std::copy(new_nhood.begin(), new_nhood.end(), to_node->nbrs);
         // add backward edge to disk index delta
@@ -496,7 +638,6 @@ void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_
 
   DiskIndexDataIterator<T, TagT> index_data_iter = this->GetIterator();
   index_data_iter.Init(false/* read_write*/, &final_index_file_meta);
-  
   while(index_data_iter.HasNextBatch()){
     std::vector<diskann::DiskNode<T>>* disk_nodes = nullptr;
     std::tie(disk_nodes, std::ignore, std::ignore) = index_data_iter.NextBatch();
@@ -505,7 +646,7 @@ void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_
     diskann::cout<< "start patch, patch size: " << target << " nodes" << std::endl;
     #pragma omp parallel for schedule(dynamic, 128) num_threads(MAX_N_THREADS)
     for(size_t i = 0; i < disk_nodes->size(); i++){
-
+      set_low_priority();
       diskann::DiskNode<T>& disk_node = (*disk_nodes)[i];
       int      omp_thread_no = omp_get_thread_num();
       uint8_t *thread_scratch = thread_bufs[omp_thread_no];
@@ -550,11 +691,15 @@ void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_
       index_data_iter.NotifyNodeFlushBack();
 
       // 每完成一定进度输出一次
-      if (progress % 10000 == 0) {
-          std::cout << "Progress: " << progress << "(actual patch: " << patch_num << ")" << "/" << target << std::endl;
-      }
+      // #pragma omp critical
+      // if (progress % 10000 == 0) {
+      //     std::cout << "Progress: " << progress << "(actual patch: " << patch_num << ")" << "/" << target << std::endl;
+      // }
     }
   }
+  index_data_iter.TryFlushBack();
+  double io_time = index_data_iter.GetIOTime(); 
+  diskann::cout << "read io cost time in PatchPhase: " <<  io_time << " s" << std::endl;
   /**
    * Write Header
   */
@@ -620,6 +765,10 @@ void DiskIndexMerger<T, TagT>::TagInfo(){
                << real_cnt << "/"
                << npts << "/"
                << std::endl;
+}
+template<typename T, typename TagT>
+void DiskIndexMerger<T, TagT>::ReportGraphDelta(){
+  this->delta->report();
 }
 template<typename T, typename TagT>
 void DiskIndexMerger<T, TagT>::DumpToDisk(const uint32_t start_id,

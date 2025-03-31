@@ -1,4 +1,4 @@
-#include "lsm/index_data_iterator.h"
+#include "lsm/merger/util/index_data_iterator.h"
 #include "lsm/options.h"
 #include "utils.h"
 
@@ -8,6 +8,7 @@ template<typename T, typename TagT>
 DiskIndexDataIterator<T, TagT>::~DiskIndexDataIterator(){
   TryFlushBack();
   diskann::aligned_free((void *) buf_);
+  // diskann::cout << "Deconstruct a Disk Iterator of" << this->index_file_meta_.data_path <<"("<<this->sum<<")"<<std::endl;
 }
 
 template<typename T, typename TagT>
@@ -71,8 +72,13 @@ std::tuple<std::vector<diskann::DiskNode<T>>*,uint8_t *, TagT*> DiskIndexDataIte
   this->disk_nodes_.clear();
   this->local_offset_ = 0;
   this->cur_start_id_ = this->next_start_id_; 
+  memset(this->buf_, 0, SECTORS_PER_MERGE * SECTOR_LEN);
+  auto s = std::chrono::high_resolution_clock::now();
   this->next_start_id_ = this->index_->merge_read(this->disk_nodes_, this->cur_start_id_,
                                                 SECTORS_PER_MERGE, this->buf_);
+  auto e = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = e - s;
+  this->io_time += diff.count();
   /**
    * 同时获取下一个batch对应的PQ坐标信息和tag信息
   */
@@ -83,7 +89,7 @@ std::tuple<std::vector<diskann::DiskNode<T>>*,uint8_t *, TagT*> DiskIndexDataIte
   const uint64_t pq_offset = cur_offset * pq_nchunks;
   TagT* tag = &this->index_->get_tags()[cur_offset];
   diskann::cout << "read a batch from " << index_file_meta_.data_path<<"; patch size: "<< this->disk_nodes_.size()<<" nodes"<< std::endl;
-
+  // this->sum += this->disk_nodes_.size();
   // 如果输出文件与输入文件不同，则无论是否为脏都需要写回
   if(!read_write_same_file_){
     this->NotifyFlushBack();
@@ -172,7 +178,11 @@ void DiskIndexDataIterator<T, TagT>::NodeFlushBack(){
   if(read_only_){
     return;
   }
+  auto s = std::chrono::high_resolution_clock::now();
   this->DumpToDisk(this->cur_start_id_,this->buf_,SECTORS_PER_MERGE,this->output_index_file_meta_.data_path);
+  auto e = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = e - s;
+  this->io_time += diff.count();
   this->node_need_flush_back_ = false;
 }
 
@@ -185,11 +195,15 @@ void DiskIndexDataIterator<T, TagT>::PQCoordFlushBack(){
   uint64_t pq_nchunks = res.second;
   uint8_t * pq_data = res.first;
 
+  auto s = std::chrono::high_resolution_clock::now();
   diskann::save_bin<uint8_t>(this->output_index_file_meta_.pq_coords_path, 
                             pq_data,
                             (uint64_t) this->index_->return_nd(),
                             pq_nchunks,
                             0);
+  auto e = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = e - s;
+  this->io_time += diff.count();
   this->pq_need_flush_back_ = false;
 }
 
@@ -199,12 +213,15 @@ void DiskIndexDataIterator<T, TagT>::TagFlushBack(){
   diskann::cout << "Dumping Tags Data from memory.\n";
   
   TagT* tag_data = this->index_->get_tags();
-
+  auto s = std::chrono::high_resolution_clock::now();
   diskann::save_bin<TagT>(this->output_index_file_meta_.tag_path, 
                     tag_data, 
                     (uint64_t) this->index_->return_nd(), 
                     1,
                     0);
+  auto e = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = e - s;
+  this->io_time += diff.count();
   this->tag_need_flush_back_ = false;
 }
 

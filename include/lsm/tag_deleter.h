@@ -12,9 +12,9 @@
 
 namespace lsmidx{
 template<typename TagT = uint32_t>
-class TagDeleter{
+class MultiTagDeleter{
 public:
-  TagDeleter(int num);
+  MultiTagDeleter(int num);
   bool Insert(TagT tag);
   bool IsDelete(TagT tag);
   std::vector<TagT>* Switch();
@@ -27,4 +27,23 @@ private:
   std::atomic_bool check_switch_delete; 
 };
 
+template<typename TagT = uint32_t>
+class TagDeleter{
+public:
+  bool Insert(TagT tag);
+  bool IsDelete(TagT tag);
+  void FilterDeletedTags(tsl::robin_set<TagT>& active_tags);
+  _u64 Save(std::string index_prefix);
+  _u64 Load(std::string index_prefix);
+  std::unique_lock<std::shared_mutex> GetWriteLock();
+  std::shared_lock<std::shared_mutex> GetReadLock();
+  bool IsEmpty();
+  void Union(tsl::robin_set<TagT>& union_delete_set);
+  void Union(TagDeleter<TagT>& union_delete_set);
+  void Clear();
+  void Swap(tsl::robin_set<TagT>& delete_set);
+private:
+  tsl::robin_set<TagT> delete_set;
+  std::shared_mutex lock;
+};
 } // namesp lsmidx

@@ -3,7 +3,7 @@
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
 #include "utils.h"
-#include "lsm/level0_merger.h"
+#include "lsm/merger/mem_to_level1_merger.h"
 #include <algorithm>
 #include <cassert>
 #include <csignal>
@@ -24,7 +24,7 @@
 
 namespace lsmidx {
 template<typename T, typename TagT>
-Level0Merger<T, TagT>::Level0Merger(
+Mem2Level1Merger<T, TagT>::Mem2Level1Merger(
     const uint32_t ndims, diskann::Distance<T> *dist, diskann::Metric dist_metric, const uint32_t beam_width,
     const uint32_t range, const uint32_t l_index, const float alpha,
     const uint32_t maxc, bool single_file_index) {
@@ -40,14 +40,14 @@ Level0Merger<T, TagT>::Level0Merger(
   this->dist_cmp = dist;
   this->_single_file_index = single_file_index;
 
-  std::cout << "Level0Merger created with R=" << this->range
+  std::cout << "Mem2Level1Merger created with R=" << this->range
             << " L=" << this->l_index << " BW=" << this->beam_width
             << " MaxC=" << this->maxc << " alpha=" << this->alpha
             << " ndims: " << this->ndims << std::endl;
 }
 
 template<typename T, typename TagT>
-Level0Merger<T, TagT>::~Level0Merger() {
+Mem2Level1Merger<T, TagT>::~Mem2Level1Merger() {
   // release scratch alloc memory
   // delete this->fp_alloc;
   // delete this->pq_alloc;
@@ -68,7 +68,7 @@ Level0Merger<T, TagT>::~Level0Merger() {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::process_inserts_pq() {
+void Mem2Level1Merger<T, TagT>::process_inserts_pq() {
   diskann::Timer total_insert_timer;
   this->insert_times.resize(MAX_N_THREADS, 0.0);
   this->delta_times.resize(MAX_N_THREADS, 0.0);
@@ -125,7 +125,7 @@ void Level0Merger<T, TagT>::process_inserts_pq() {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::process_inserts() {
+void Mem2Level1Merger<T, TagT>::process_inserts() {
   diskann::Timer total_insert_timer;
   this->insert_times.resize(MAX_INSERT_THREADS, 0.0);
   this->delta_times.resize(MAX_INSERT_THREADS, 0.0);
@@ -188,7 +188,7 @@ void Level0Merger<T, TagT>::process_inserts() {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::insert_mem_vec(const T *      mem_vec,
+void Mem2Level1Merger<T, TagT>::insert_mem_vec(const T *      mem_vec,
                                               const uint32_t offset_id) {
   diskann::Timer timer;
   float insert_time, delta_time;
@@ -236,7 +236,7 @@ void Level0Merger<T, TagT>::insert_mem_vec(const T *      mem_vec,
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::offset_iterate_to_fixed_point(
+void Mem2Level1Merger<T, TagT>::offset_iterate_to_fixed_point(
     const T *vec, const uint32_t Lsize,
     std::vector<diskann::Neighbor> &        expanded_nodes_info,
     tsl::robin_map<uint32_t, T *> &coord_map) {
@@ -279,7 +279,7 @@ void Level0Merger<T, TagT>::offset_iterate_to_fixed_point(
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::prune_neighbors(
+void Mem2Level1Merger<T, TagT>::prune_neighbors(
     const tsl::robin_map<uint32_t, T *> &coord_map,
     std::vector<diskann::Neighbor> &pool, std::vector<uint32_t> &pruned_list) {
   if (pool.size() == 0)
@@ -310,7 +310,7 @@ void Level0Merger<T, TagT>::prune_neighbors(
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::prune_neighbors_pq(
+void Mem2Level1Merger<T, TagT>::prune_neighbors_pq(
     std::vector<diskann::Neighbor> &pool, std::vector<uint32_t> &pruned_list,
     uint8_t *scratch) {
   if (pool.size() == 0)
@@ -341,7 +341,7 @@ void Level0Merger<T, TagT>::prune_neighbors_pq(
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::occlude_list(
+void Mem2Level1Merger<T, TagT>::occlude_list(
     std::vector<diskann::Neighbor> &              pool,
     const tsl::robin_map<uint32_t, T *> &coord_map,
     std::vector<diskann::Neighbor> &result, std::vector<float> &occlude_factor) {
@@ -384,7 +384,7 @@ void Level0Merger<T, TagT>::occlude_list(
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::occlude_list_pq(
+void Mem2Level1Merger<T, TagT>::occlude_list_pq(
     std::vector<diskann::Neighbor> &pool, std::vector<diskann::Neighbor> &result,
     std::vector<float> &occlude_factor, uint8_t *scratch) {
   if (pool.empty())
@@ -420,7 +420,7 @@ void Level0Merger<T, TagT>::occlude_list_pq(
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::dump_to_disk(const uint32_t start_id,
+void Mem2Level1Merger<T, TagT>::dump_to_disk(const uint32_t start_id,
                                             const char *   buf,
                                             const uint32_t n_sectors,
                                             std::ofstream & output_writer) {
@@ -447,7 +447,7 @@ void Level0Merger<T, TagT>::dump_to_disk(const uint32_t start_id,
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::compute_deleted_ids() {
+void Mem2Level1Merger<T, TagT>::compute_deleted_ids() {
   // process disk deleted tags
   for (uint32_t i = 0; i < this->disk_npts; i++) {
     TagT i_tag = this->disk_tags[i];
@@ -479,7 +479,7 @@ void Level0Merger<T, TagT>::compute_deleted_ids() {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::process_deletes() {
+void Mem2Level1Merger<T, TagT>::process_deletes() {
   // buf to hold data being read
   char *buf = nullptr;
   diskann::alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
@@ -589,7 +589,7 @@ void Level0Merger<T, TagT>::process_deletes() {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::populate_deleted_nhoods() {
+void Mem2Level1Merger<T, TagT>::populate_deleted_nhoods() {
   // buf for scratch
   char *buf = nullptr;
   diskann::alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
@@ -634,7 +634,7 @@ void Level0Merger<T, TagT>::populate_deleted_nhoods() {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::consolidate_deletes(diskann::DiskNode<T> &disk_node,
+void Mem2Level1Merger<T, TagT>::consolidate_deletes(diskann::DiskNode<T> &disk_node,
                                                     uint8_t *    scratch) {
   // if node is deleted
   // 检查节点是否已经删除了，如果已经删除了，则将邻居数设为0
@@ -726,7 +726,7 @@ void Level0Merger<T, TagT>::consolidate_deletes(diskann::DiskNode<T> &disk_node,
 }
 
 template<typename T, typename TagT>
-bool Level0Merger<T, TagT>::is_deleted(const diskann::DiskNode<T> &disk_node) {
+bool Mem2Level1Merger<T, TagT>::is_deleted(const diskann::DiskNode<T> &disk_node) {
   // short circuit when disk_node is a `hole` on disk
   if (this->disk_tags[disk_node.id] == std::numeric_limits<uint32_t>::max()) {
     if (disk_node.nnbrs != 0) {
@@ -746,7 +746,7 @@ bool Level0Merger<T, TagT>::is_deleted(const diskann::DiskNode<T> &disk_node) {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::compute_rename_map() {
+void Mem2Level1Merger<T, TagT>::compute_rename_map() {
   uint32_t needed = 0;
   for (auto &mem_npt : this->mem_npts) {
     needed += mem_npt;
@@ -808,7 +808,7 @@ void Level0Merger<T, TagT>::compute_rename_map() {
 }
 
 template<typename T, typename TagT>
-uint32_t Level0Merger<T, TagT>::rename(uint32_t id) const {
+uint32_t Mem2Level1Merger<T, TagT>::rename(uint32_t id) const {
   auto iter = std::lower_bound(
       this->rename_list.begin(), this->rename_list.end(),
       std::make_pair(id, std::numeric_limits<uint32_t>::max()),
@@ -828,7 +828,7 @@ uint32_t Level0Merger<T, TagT>::rename(uint32_t id) const {
 }
 
 template<typename T, typename TagT>
-uint32_t Level0Merger<T, TagT>::rename_inverse(uint32_t renamed_id) const {
+uint32_t Mem2Level1Merger<T, TagT>::rename_inverse(uint32_t renamed_id) const {
   auto iter = std::lower_bound(
       this->inverse_list.begin(), this->inverse_list.end(),
       std::make_pair(renamed_id, std::numeric_limits<uint32_t>::max()),
@@ -848,7 +848,7 @@ uint32_t Level0Merger<T, TagT>::rename_inverse(uint32_t renamed_id) const {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::rename(diskann::DiskNode<T> &node) const {
+void Mem2Level1Merger<T, TagT>::rename(diskann::DiskNode<T> &node) const {
   uint32_t renamed_id = this->rename(node.id);
   if (renamed_id != std::numeric_limits<uint32_t>::max()) {
     node.id = renamed_id;
@@ -863,7 +863,7 @@ void Level0Merger<T, TagT>::rename(diskann::DiskNode<T> &node) const {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::rename(std::vector<uint32_t> &ids) const {
+void Mem2Level1Merger<T, TagT>::rename(std::vector<uint32_t> &ids) const {
   for (uint32_t i = 0; i < ids.size(); i++) {
     uint32_t renamed_id = this->rename(ids[i]);
     if (renamed_id != std::numeric_limits<uint32_t>::max()) {
@@ -873,7 +873,7 @@ void Level0Merger<T, TagT>::rename(std::vector<uint32_t> &ids) const {
 }
 
 template<typename T, typename TagT>
-uint32_t Level0Merger<T, TagT>::get_index_id(
+uint32_t Mem2Level1Merger<T, TagT>::get_index_id(
     const uint32_t offset_id) const {
   if (offset_id < this->offset_ids[0]) {
     return std::numeric_limits<uint32_t>::max();
@@ -891,7 +891,7 @@ uint32_t Level0Merger<T, TagT>::get_index_id(
 }
 
 template<typename T, typename TagT>
-std::vector<uint32_t> Level0Merger<T, TagT>::get_edge_list(
+std::vector<uint32_t> Mem2Level1Merger<T, TagT>::get_edge_list(
     const uint32_t offset_id) {
   const uint32_t index_no = this->get_index_id(offset_id);
   if (index_no == std::numeric_limits<uint32_t>::max()) {
@@ -907,7 +907,7 @@ std::vector<uint32_t> Level0Merger<T, TagT>::get_edge_list(
 }
 
 template<typename T, typename TagT>
-const T *Level0Merger<T, TagT>::get_mem_data(const uint32_t offset_id) {
+const T *Mem2Level1Merger<T, TagT>::get_mem_data(const uint32_t offset_id) {
   const uint32_t index_no = this->get_index_id(offset_id);
   if (index_no == std::numeric_limits<uint32_t>::max()) {
     assert(offset_id < this->offset_ids[0]);
@@ -920,7 +920,7 @@ const T *Level0Merger<T, TagT>::get_mem_data(const uint32_t offset_id) {
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::write_tag_file(
+void Mem2Level1Merger<T, TagT>::write_tag_file(
     const std::string &tag_out_filename, const uint32_t npts) {
   diskann::Timer timer;
   diskann::cout << "Writing new tags to " << tag_out_filename << "\n";
@@ -968,7 +968,7 @@ void Level0Merger<T, TagT>::write_tag_file(
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::process_merges() {
+void Mem2Level1Merger<T, TagT>::process_merges() {
   // buf to hold data being read
   char *buf = nullptr;
   diskann::alloc_aligned((void **) &buf, SECTORS_PER_MERGE * SECTOR_LEN, SECTOR_LEN);
@@ -1133,7 +1133,7 @@ void Level0Merger<T, TagT>::process_merges() {
 
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::merge(const char *                    disk_in,
+void Mem2Level1Merger<T, TagT>::merge(const char *                    disk_in,
                                       const std::vector<std::string> &mem_in,
                                       const char *                    disk_out,
                                       std::vector<const std::vector<TagT>*> &deleted_tags_vectors,
@@ -1387,7 +1387,7 @@ void Level0Merger<T, TagT>::merge(const char *                    disk_in,
 }
 
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::mergeImpl() {
+void Mem2Level1Merger<T, TagT>::mergeImpl() {
   // 这部分确保在继续操作之前所有删除操作都被正确处理
 
   // 第一步：填充被删除的ID和相关邻居信息
@@ -1522,7 +1522,7 @@ void Level0Merger<T, TagT>::mergeImpl() {
   // batch rename all inserted edges in each delta
   diskann::cout << "Renaming edges for easier access during merge.\n";
   // const std::function<uint32_t(uint32_t)> rename_func =
-  // std::bind(&Level0Merger<T, TagT>::rename, this);
+  // std::bind(&Mem2Level1Merger<T, TagT>::rename, this);
   const std::function<uint32_t(uint32_t)> rename_func = [this](uint32_t id) {
     return this->rename(id);
   };
@@ -1691,13 +1691,13 @@ void Level0Merger<T, TagT>::mergeImpl() {
 }
 
   // template class instantiations
-  template class Level0Merger<float, uint32_t>;
-  template class Level0Merger<uint8_t, uint32_t>;
-  template class Level0Merger<int8_t, uint32_t>;
-  template class Level0Merger<float, int64_t>;
-  template class Level0Merger<uint8_t, int64_t>;
-  template class Level0Merger<int8_t, int64_t>;
-  template class Level0Merger<float, uint64_t>;
-  template class Level0Merger<uint8_t, uint64_t>;
-  template class Level0Merger<int8_t, uint64_t>;
+  template class Mem2Level1Merger<float, uint32_t>;
+  template class Mem2Level1Merger<uint8_t, uint32_t>;
+  template class Mem2Level1Merger<int8_t, uint32_t>;
+  template class Mem2Level1Merger<float, int64_t>;
+  template class Mem2Level1Merger<uint8_t, int64_t>;
+  template class Mem2Level1Merger<int8_t, int64_t>;
+  template class Mem2Level1Merger<float, uint64_t>;
+  template class Mem2Level1Merger<uint8_t, uint64_t>;
+  template class Mem2Level1Merger<int8_t, uint64_t>;
 }  // namespace diskann

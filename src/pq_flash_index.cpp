@@ -135,8 +135,8 @@ namespace diskann {
     }
 #endif
 
-    diskann::cout << "Thread Data size: " << this->thread_data.size() << "\n";
-    // assert(!this->thread_data.empty());
+    // diskann::cout << "Thread Data size: " << this->thread_data.size() <<
+    // "\n"; assert(!this->thread_data.empty());
 
 #ifndef EXEC_ENV_OLS
     if (centroid_data != nullptr)
@@ -825,6 +825,8 @@ namespace diskann {
       medoids = new uint32_t[1];
       medoids[0] = (_u32) (medoid_id_on_file);
       use_medoids_data_as_centroids();
+      diskann::cout << "LOAD: use_medoids_data_as_centroids: Medoid-ID: "
+                    << medoid_id_on_file << "\n";
     }
 
     // load tags
@@ -848,7 +850,14 @@ namespace diskann {
   _u64 PQFlashIndex<T, TagT>::return_nd() {
     return this->num_points;
   }
-
+  template<typename T, typename TagT>
+  _u64 PQFlashIndex<T, TagT>::return_active_nd() {
+    return this->num_points - this->num_frozen_points;
+  }
+  template<typename T, typename TagT>
+  _u64 PQFlashIndex<T, TagT>::return_frozen_location() {
+    return this->num_frozen_points == 1 ? this->frozen_location : -1;
+  }
 #ifdef USE_BING_INFRA
   bool getNextCompletedRequest(const IOContext &ctx, size_t size,
                                int &completedIndex) {

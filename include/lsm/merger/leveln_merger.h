@@ -1,7 +1,7 @@
 #pragma once
 
-#include "lsm/level_merger.h"
-#include "lsm/disk_index_merger.h"
+#include "lsm/merger/level_merger.h"
+#include "lsm/merger/util/disk_index_merger.h"
 
 namespace lsmidx {
 

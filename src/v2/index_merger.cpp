@@ -938,6 +938,7 @@ namespace diskann {
     TagT *cur_tags;
 
     size_t allocSize = npts * sizeof(TagT);
+    allocSize = ROUND_UP(allocSize, 8 * sizeof(TagT));
     alloc_aligned(((void **) &cur_tags), allocSize, 8 * sizeof(TagT));
 
     //TODO: We must detect holes in a better way. Currently, it is possible

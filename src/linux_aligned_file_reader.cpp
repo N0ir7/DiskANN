@@ -111,8 +111,7 @@ io_context_t &LinuxAlignedFileReader::get_ctx() {
 }
 
 void LinuxAlignedFileReader::register_thread() {
-  auto my_id = std::this_thread::get_id();
-  std::cout << "register for thread id : " << my_id << std::endl;
+  auto                         my_id = std::this_thread::get_id();
   std::unique_lock<std::mutex> lk(ctx_mut);
   if (ctx_map.find(my_id) != ctx_map.end()) {
     return;

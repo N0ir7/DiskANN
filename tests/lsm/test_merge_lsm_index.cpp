@@ -50,7 +50,12 @@ void merge_kernel(lsmidx::LSMVectorIndex<T, TagT>        &lsm_index,
                    bool                            print_stats = false) {
   
   omp_set_max_active_levels(4);
-  if(merge_level == 0){
+  if(merge_level == -1){
+    lsmidx::WriteOptions opt;
+    // lsm_index.Delete(opt, lsmidx::TagSlice<TagT>(2));
+    // lsm_index.Delete(opt, lsmidx::TagSlice<TagT>(3));
+    // lsm_index.Delete(opt, lsmidx::TagSlice<TagT>(4));
+    // lsm_index.Delete(opt, lsmidx::TagSlice<TagT>(5));
     lsm_index.TriggerMergeMemIndex();
   }else{
     lsm_index.TriggerMergeDiskIndex(merge_level);

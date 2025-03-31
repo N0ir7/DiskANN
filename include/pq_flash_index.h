@@ -101,6 +101,8 @@ namespace diskann {
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
 
     DISKANN_DLLEXPORT _u64 return_nd();
+    DISKANN_DLLEXPORT _u64 return_active_nd();
+    DISKANN_DLLEXPORT _u64 return_frozen_location();
 
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT void generate_cache_list_from_sample_queries(
@@ -202,6 +204,9 @@ namespace diskann {
     DISKANN_DLLEXPORT _u64 get_frozen_loc() {
       return this->frozen_location;
     }
+    DISKANN_DLLEXPORT std::pair<uint32_t *, size_t> get_medoid() {
+      return {this->medoids, this->num_medoids};
+    }
     DISKANN_DLLEXPORT _u64 get_dim() {
       return this->data_dim;
     }
@@ -235,7 +240,7 @@ namespace diskann {
     std::string                        _disk_index_file;
     std::vector<std::pair<_u32, _u32>> node_visit_counter;
 
-    std::shared_ptr<AlignedFileReader> &reader;
+    std::shared_ptr<AlignedFileReader> reader;
 
     // PQ data
     // n_chunks = # of chunks ndims is split into

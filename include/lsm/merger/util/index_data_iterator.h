@@ -6,16 +6,19 @@
 #include <memory>
 #include "pq_flash_index.h"
 #include "concurrent_queue.h"
+#include "lsm/level/level_index.h"
 
 namespace lsmidx
 {
 struct DiskIndexFileMeta{
+  std::string vector_path;
   std::string data_path;
   std::string tag_path;
   std::string pq_coords_path;
   std::string pq_table_path;
   std::string medoids_file_path;
   std::string centroids_file_path;
+  std::string delete_list_path;
   std::string index_prefix_path;
   bool is_single_file;
   DiskIndexFileMeta(){};
@@ -35,6 +38,7 @@ struct DiskIndexFileMeta{
       tag_path = iprefix + "_disk.index.tags";
       medoids_file_path = data_path + "_medoids.bin";
       centroids_file_path = data_path + "_centroids.bin";
+      delete_list_path = iprefix + ".del";
     }
   }
 };
@@ -99,6 +103,9 @@ class DiskIndexDataIterator{
     void NotifyNodeFlushBack();
     void NotifyPQCoordFlushBack();
     void NotifyTagFlushBack();
+    double GetIOTime(){
+      return io_time;
+    }
   private:
     DiskIndexFileMeta index_file_meta_;
     DiskIndexFileMeta output_index_file_meta_;
@@ -120,5 +127,25 @@ class DiskIndexDataIterator{
                     const char *   buf,
                     const uint32_t n_sectors,
                     std::string data_path);
+    // int sum = 0;
+    double io_time = 0;
+};
+template<typename T,typename TagT>
+class MultiDiskIndexDataIterator{
+  public:
+    MultiDiskIndexDataIterator(std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> indexes, std::vector<tsl::robin_set<TagT>>* ptr):indexes(std::move(indexes)), deleted_tags_vec(ptr){};
+
+    std::tuple<diskann::DiskNode<T> *, uint8_t *, TagT*> Next();
+    bool HasNext();
+    bool HasNextBatch();
+    std::tuple<std::vector<diskann::DiskNode<T>> *,uint8_t *, TagT*> NextBatch();
+    tsl::robin_set<TagT>* GetCurDeleteTagSet();
+    int GetCurIndexFrozenPoint();
+    void Init();
+  private:
+    std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> indexes;
+    std::vector<tsl::robin_set<TagT>>* deleted_tags_vec;
+    std::shared_ptr<DiskIndexDataIterator<T, TagT>> iter;
+    int cur = 0;
 };
 } // namespace lsmidx

@@ -2,7 +2,7 @@
 #include <iostream>
 #include <cassert>
 #include <atomic>
-
+#include <iomanip>  // std::setprecision
 #include "utils.h"
 #include "logger.h"
 
@@ -19,7 +19,49 @@ namespace diskann {
   bool GraphDelta::is_relevant(const uint32_t id) {
     return (id < offset + max_nodes && id >= offset);
   }
+  void GraphDelta::report(){
+    // 获取 graph 的数据
+    size_t num_nodes = graph.size();
 
+    if (num_nodes == 0) {
+        std::cout << "Graph is empty." << std::endl;
+        return;
+    }
+
+    // 计算所有节点的出度
+    std::vector<uint32_t> degrees;
+    degrees.reserve(num_nodes);
+    size_t total_degree = 0;
+
+    for (const auto& nhood : graph) {
+        uint32_t degree = static_cast<uint32_t>(nhood.size());
+        degrees.push_back(degree);
+        total_degree += degree;
+    }
+
+    // 计算平均出度
+    double avg_degree = static_cast<double>(total_degree) / num_nodes;
+
+    // 对出度进行排序
+    std::sort(degrees.begin(), degrees.end());
+
+    // 计算分位点
+    auto get_percentile = [&](double p) -> uint32_t {
+        size_t idx = static_cast<size_t>(p * num_nodes);
+        if (idx >= num_nodes) idx = num_nodes - 1;  // 确保索引不越界
+        return degrees[idx];
+    };
+
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Graph Statistics:\n";
+    std::cout << "  - Nodes: " << num_nodes << "\n";
+    std::cout << "  - Average Out-degree: " << avg_degree << "\n";
+    std::cout << "  - 10% Percentile Out-degree: " << get_percentile(0.1) << "\n";
+    std::cout << "  - 50% Percentile (Median) Out-degree: " << get_percentile(0.5) << "\n";
+    std::cout << "  - 90% Percentile Out-degree: " << get_percentile(0.9) << "\n";
+    std::cout << "  - 99% Percentile Out-degree: " << get_percentile(0.99) << "\n";
+    std::cout << "  - 99.9% Percentile Out-degree: " << get_percentile(0.999) << "\n";
+  }
   void GraphDelta::insert_vector(const uint32_t id, const uint32_t*nhood, const uint32_t nnbrs) {
     if (!this->is_relevant(id)) {
       return;

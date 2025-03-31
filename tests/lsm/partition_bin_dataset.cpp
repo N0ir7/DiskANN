@@ -26,7 +26,14 @@ void partition_dataset(std::vector<int>& partition_size, std::string data_path){
     for(auto size : partition_size){
       std::string out_path_prefix = filename + "_" + std::to_string(size/1000) +"k";
       std::string out_data_path = out_path_prefix + "." + extension;
+      int i = 1;
+      while(file_exists(out_data_path)){
+        out_data_path = out_path_prefix + "_" + std::to_string(++i)+ "." + extension;
+      }
       std::string out_tag_path = out_path_prefix + ".tags";
+      if(i != 1){
+        out_tag_path = out_path_prefix + "_" + std::to_string(i) + ".tags";
+      }
       std::ofstream writr(out_data_path, std::ios::binary);
       std::ofstream writr2(out_tag_path, std::ios::binary);
       writr.write((char*) &size, sizeof(_s32));

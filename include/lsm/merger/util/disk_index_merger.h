@@ -11,10 +11,11 @@
 #include <mutex>
 #include <thread>
 #include <vector>
-#include "lsm/level_merger.h"
+#include "lsm/merger/level_merger.h"
 #include "windows_customizations.h"
-#include "lsm/index_data_iterator.h"
+#include "lsm/merger/util/index_data_iterator.h"
 #include "lsm/options.h"
+#include "lsm/level/level_index.h"
 
 namespace lsmidx
 {
@@ -37,10 +38,11 @@ class DiskIndexMerger{
     diskann::Metric dist_metric;
     diskann::Distance<T> * dist_cmp;
     DiskIndexParam param;
-    std::shared_ptr<AlignedFileReader> reader;
     std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index;
-    DiskIndexMerger(DiskIndexFileMeta meta):meta(meta),delta(nullptr),index(nullptr){};
-
+    std::shared_ptr<AlignedFileReader> reader;
+    DiskIndexMerger(DiskIndexFileMeta meta):meta(meta),delta(nullptr),index(nullptr),reader(std::make_shared<LinuxAlignedFileReader>()){};
+    DiskIndexMerger(DiskIndexFileMeta meta, std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index):meta(meta),delta(nullptr),index(index),reader(std::make_shared<LinuxAlignedFileReader>()){};
+    ~DiskIndexMerger();
     // 创建一个新的 PQFlashIndex 对象，负责需要merge的磁盘索引的操作
     void InitIndex();
     // 创建一个新的 PQFlashIndex 对象，负责需要merge的磁盘索引的操作,同时全局缓存一些节点
@@ -56,7 +58,7 @@ class DiskIndexMerger{
                         tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods,
                         std::vector<uint8_t *>& thread_bufs);
     
-    void ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list, DiskIndexDataIterator<T, TagT>& index_data_iter);
+    void ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list, DiskIndexDataIterator<T, TagT>& index_data_iter, tsl::robin_set<TagT>* delete_tag_set = nullptr, int frozen_location=-1);
 
     void ProcessPatch(DiskIndexFileMeta& final_index_file_meta, std::vector<uint8_t *>& thread_bufs);
 
@@ -140,6 +142,7 @@ class DiskIndexMerger{
     void WriteDataFileHeaderAfterInsertPhase();
     bool TagExist(TagT tag);
     void TagInfo();
+    void ReportGraphDelta();
   private:
     bool ConsolidateDeletes(diskann::DiskNode<T> &disk_node, uint8_t * scratch, tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods);
     /**
@@ -164,5 +167,17 @@ class DiskIndexMerger{
     void WriteDataFileHeaderAfterDeletePhase(std::string data_path,tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods);
     void WriteDataFileHeaderAfterPatchPhase(std::string data_path);
 };
-
+template<typename T, typename TagT = uint32_t>
+class SourceDiskIndexMerger{
+  public:
+    SourceDiskIndexMerger(std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> &src_indexes);
+    MultiDiskIndexDataIterator<T, TagT> GetIterator();
+    uint32_t GetNumPoints();
+    tsl::robin_set<TagT>& GetDeleteTagSet();
+    tsl::robin_set<TagT>* GetDeleteTagSet(int idx);
+  private:
+    std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> indexes;
+    std::vector<tsl::robin_set<TagT>> deleted_tags_vec;
+    uint32_t total_num;
+};
 } // namespace lsmidx

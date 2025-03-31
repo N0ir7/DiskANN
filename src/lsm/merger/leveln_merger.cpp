@@ -1,4 +1,4 @@
-#include "lsm/leveln_merger.h"
+#include "lsm/merger/leveln_merger.h"
 #include <algorithm>
 #include <cassert>
 #include <csignal>
@@ -19,7 +19,7 @@
 #include "tcmalloc/malloc_extension.h"
 #include "logger.h"
 #include "ann_exception.h"
-#include "lsm/index_data_iterator.h"
+#include "lsm/merger/util/index_data_iterator.h"
 #include "lsm/options.h"
 
 namespace lsmidx {

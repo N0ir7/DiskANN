@@ -174,6 +174,7 @@ namespace diskann {
     DISKANN_DLLEXPORT void compact_data_for_search();
 
     DISKANN_DLLEXPORT void consolidate(Parameters &parameters);
+    DISKANN_DLLEXPORT void consolidate_for_flush(Parameters &parameters);
 
     // DISKANN_DLLEXPORT void save_index_as_one_file(bool flag);
 
@@ -184,8 +185,9 @@ namespace diskann {
 
     // TODO: Debugging ONLY
     DISKANN_DLLEXPORT void print_status() const;
-    DISKANN_DLLEXPORT void are_deleted_points_in_graph() const;
-    DISKANN_DLLEXPORT void print_delete_set() const;
+    DISKANN_DLLEXPORT std::string status_str() const;
+    DISKANN_DLLEXPORT void        are_deleted_points_in_graph() const;
+    DISKANN_DLLEXPORT void        print_delete_set() const;
 
     // This variable MUST be updated if the number of entries in the metadata
     // change.
@@ -260,7 +262,7 @@ namespace diskann {
     // Returns number of live points left after consolidation
     size_t consolidate_deletes(const Parameters &parameters);
 
-   private:
+   public:
     // DEBUG ONLY
     void printTagToLocation();
 
