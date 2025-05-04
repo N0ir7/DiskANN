@@ -22,7 +22,10 @@ class cached_ifstream {
     this->open(filename, cache_size, initial_offset);
   }
   ~cached_ifstream() {
-    //    delete[] cache_buf;
+    if (cache_buf) {
+      delete[] cache_buf;
+      cache_buf = nullptr;
+    }
     if (reader.is_open())
       reader.close();
   }
@@ -44,6 +47,10 @@ class cached_ifstream {
     diskann::cout << "Opened: " << filename.c_str() << ", size: " << fsize
                   << ", cache_size: " << cacheSize << std::endl;
     this->cache_size = cacheSize;
+    if (cache_buf) {
+      delete[] cache_buf;
+      cache_buf = nullptr;
+    }
     cache_buf = new char[cacheSize];
     //    cache_buf = std::make_unique<char[]>(cacheSize);
     reader.read(cache_buf, cacheSize);
@@ -120,6 +127,10 @@ class cached_ofstream {
     assert(writer.is_open());
     assert(cache_size > 0);
     writer.seekp(initial_offset, writer.beg);
+    if (cache_buf) {
+      delete[] cache_buf;
+      cache_buf = nullptr;
+    }
     cache_buf = new char[cache_size];
     fsize = initial_offset;
     diskann::cout << "Opened: " << filename.c_str()

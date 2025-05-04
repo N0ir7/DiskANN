@@ -43,61 +43,26 @@ std::string           all_points_file;
 bool                  save_index_as_one_file;
 std::string           query_file = "";
 std::string           truthset_file = "";
+std::string           log_prefix = "";
+unsigned *gt_ids = nullptr;
+uint32_t *gt_tags = nullptr;
+float    *gt_dists = nullptr;
+size_t    gt_num, gt_dim;
 
 template<typename T, typename TagT = uint32_t>
-void search_kernel(lsmidx::LSMVectorIndex<T, TagT>        &lsm_index,
+void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT>        &lsm_index,
                    const tsl::robin_set<uint32_t> &active_tags,
                    bool                            print_stats = false) {
   uint64_t recall_at = params[std::string("recall_k")];
 
   // hold data
   T        *query = nullptr;
-  unsigned *gt_ids = nullptr;
-  uint32_t *gt_tags = nullptr;
-  float    *gt_dists = nullptr;
-  size_t    query_num, query_dim, query_aligned_dim, gt_num, gt_dim;
+  size_t    query_num, query_dim, query_aligned_dim;
 
   std::cout << "Loading query : " << ::query_file << std::endl;
   // load query + truthset
   diskann::load_aligned_bin<T>(::query_file, query, query_num, query_dim,
                                query_aligned_dim);
-  std::cout << "Loaded query : " << ::truthset_file << std::endl;
-  std::cout << "Loading gt : " << ::query_file << std::endl;
-  diskann::load_truthset(::truthset_file, gt_ids, gt_dists, gt_num, gt_dim,
-                         &gt_tags);
-  std::cout << "Loaded gt" << std::endl;
-  if (gt_num != query_num) {
-    std::cout << "Error. Mismatch in number of queries and ground truth data"
-              << std::endl;
-  }
-
-  if (print_stats) {
-    std::string recall_string = "SS-Recall@" + std::to_string(recall_at);
-    std::cout << std::setw(4) << "Ls" << std::setw(12) << "QPS "
-              << std::setw(18) << "Mean Latency (ms)" << std::setw(12)
-              << "90 Latency" << std::setw(12) << "95 Latency" << std::setw(12)
-              << "99 Latency" << std::setw(12) << "99.9 Latency"
-              << std::setw(12) << recall_string << std::setw(12)
-              << "Mean disk IOs" << std::endl;
-
-    std::cout
-
-        << "==============================================================="
-           "==============="
-        << std::endl;
-  } else {
-    std::string recall_string = "Recall@" + std::to_string(recall_at);
-    std::cout << std::setw(4) << "Ls" << std::setw(12) << "QPS "
-              << std::setw(18) << "Mean Latency (ms)" << std::setw(12)
-              << "90 Latency" << std::setw(12) << "95 Latency" << std::setw(12)
-              << "99 Latency" << std::setw(12) << "99.9 Latency"
-              << std::setw(12) << recall_string << std::setw(12)
-              << "Mean disk IOs" << std::endl;
-    std::cout
-        << "==============================================================="
-           "==============="
-        << std::endl;
-  }
 
   // prep for search
   std::vector<uint32_t> query_result_ids;
@@ -113,6 +78,7 @@ void search_kernel(lsmidx::LSMVectorIndex<T, TagT>        &lsm_index,
     uint32_t             L = Lvec[test_id];
     std::vector<double>  latency_stats(query_num, 0);
     auto                 s = std::chrono::high_resolution_clock::now();
+    auto                 start = ::global_timer.elapsed() / 1000000;
     omp_set_max_active_levels(4);
 #pragma omp parallel for num_threads(NUM_SEARCH_THREADS)
     for (_s64 i = 0; i < (int64_t) query_num; i++) {
@@ -131,9 +97,9 @@ void search_kernel(lsmidx::LSMVectorIndex<T, TagT>        &lsm_index,
 
       std::chrono::duration<double> diff = qe - qs;
       latency_stats[i] = diff.count() * 1000;
-      //      std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     auto                          e = std::chrono::high_resolution_clock::now();
+    auto                          end = ::global_timer.elapsed() / 1000000;
     std::chrono::duration<double> diff = e - s;
     float qps = (float) (((double) query_num) / diff.count());
     // compute mean recall, IOs
@@ -142,14 +108,31 @@ void search_kernel(lsmidx::LSMVectorIndex<T, TagT>        &lsm_index,
         (unsigned) query_num, gt_ids, gt_dists, (unsigned) gt_dim,
         query_result_tags.data(), (unsigned) recall_at, (unsigned) recall_at,
         active_tags);
-    //    mean_recall /= (float) query_num;
     float mean_ios = (float) diskann::get_mean_stats(
         stats, query_num,
         [](const diskann::QueryStats &stats) { return stats.n_ios; });
+    float sum_skip = (float) diskann::get_sum_stats(
+        stats, query_num,
+        [](const diskann::QueryStats &stats) { return stats.n_skip_level0_num; });
     std::sort(latency_stats.begin(), latency_stats.end());
-    std::cout << std::setw(4) << L << std::setw(12) << qps << std::setw(18)
-              << ((float) std::accumulate(latency_stats.begin(),
-                                          latency_stats.end(), 0)) /
+    /**
+     * Output log
+    */
+    std::string recall_string = "Recall@" + std::to_string(recall_at);
+    std::cout << std::setw(6) << "Iter" << std::setw(14) << "period start" << std::setw(14) << "period end" << std::setw(4) << "Ls"
+              << std::setw(12) << "QPS " << std::setw(18) << "Mean Latency (ms)"
+              << std::setw(12) << "90 Latency" << std::setw(12) << "95 Latency"
+              << std::setw(12) << "99 Latency" << std::setw(12)
+              << "99.9 Latency" << std::setw(12) << recall_string
+              << std::setw(12) << "Mean disk IOs" << std::setw(18) << "sum level0_skip" << std::endl;
+    std::cout
+        << "=============================search=================================="
+           "==============="
+        << std::endl;
+    std::cout << std::setw(6) << iter << std::setw(14) << start << std::setw(14) << end << std::setw(4) << L
+              << std::setw(12) << qps << std::setw(18)
+              << (std::accumulate(latency_stats.begin(),
+                                          latency_stats.end(), 0.0)) /
                      (float) query_num
               << std::setw(12)
               << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
@@ -160,21 +143,52 @@ void search_kernel(lsmidx::LSMVectorIndex<T, TagT>        &lsm_index,
               << std::setw(12)
               << (float) latency_stats[(_u64) (0.999 * ((double) query_num))]
               << std::setw(12) << mean_recall << std::setw(12) << mean_ios
+              << std::setw(18) << sum_skip
               << std::endl;
+    /**
+     * output csv
+    */
+    std::string log_file_path = ::log_prefix + "_search.csv";
+    bool is_new_file = !file_exists(log_file_path);
+    std::ofstream log_file(log_file_path, std::ios::app);
+    if (log_file.is_open()) {
+        // 如果是新文件，则写入表头
+        if (is_new_file) {
+            log_file << "iter,period start,period end,Ls,QPS,Mean Latency (ms),90 Latency,"
+                        "95 Latency,99 Latency,99.9 Latency," << recall_string
+                    << ",Mean disk IOs,level0_skip" << std::endl;
+        }
+
+        // 追加数据
+        log_file << iter << ","<< start << "," << end << "," << L << "," << qps << ","
+                << (std::accumulate(latency_stats.begin(),
+                                            latency_stats.end(), 0.0)) /
+                        (float) query_num
+                << ","
+                << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
+                << ","
+                << (float) latency_stats[(_u64) (0.95 * ((double) query_num))]
+                << ","
+                << (float) latency_stats[(_u64) (0.99 * ((double) query_num))]
+                << ","
+                << (float) latency_stats[(_u64) (0.999 * ((double) query_num))]
+                << "," << mean_recall << "," << mean_ios << "," << sum_skip << std::endl;
+
+        log_file.close();
+    } else {
+        std::cerr << "Failed to open search log file!" << std::endl;
+    }
     delete[] stats;
   }
   diskann::aligned_free(query);
-  delete[] gt_ids;
-  delete[] gt_dists;
-  delete[] gt_tags;
 }
 
 template<typename T, typename TagT = uint32_t>
-void run_search_iter(lsmidx::LSMVectorIndex<T, TagT>  &lsm_index,
+void run_search_iter(int iter, lsmidx::LSMVectorIndex<T, TagT>  &lsm_index,
                      tsl::robin_set<uint32_t> &active_set) {
   // 不断执行搜索操作
   // 调用 search_kernel 执行搜索操作，使用 active_set
-  search_kernel<T, TagT>(lsm_index, active_set);
+  search_kernel<T, TagT>(iter, lsm_index, active_set);
 
   // 每次搜索后休眠 0.5 秒
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -207,15 +221,11 @@ void run_all_iters(const std::string working_dir, const std::string index_name, 
   tsl::robin_set<uint32_t> active_tags;
   std::cout << "【 Load Active Tags 】" << std::endl;
   lsm_index.GetActiveTags(active_tags);
-  // for(uint32_t i = 0; i < 132000;i++){
-  //   active_tags.insert(i);
-  // }
-  print_tags(active_tags);
   std::cout << "Loaded " << active_tags.size() << " tags" << std::endl;
   int query_num = 0;
   for (size_t i = 0; i < n_iters; i++) {
     std::cout << "ITER : " << i << std::endl;
-    run_search_iter(lsm_index, active_tags);
+    run_search_iter(i, lsm_index, active_tags);
     query_num+=10000*::Lvec.size();
     lsm_index.ReportQueryInfo(query_num);
   }
@@ -227,6 +237,7 @@ int main(int argc, char** argv) {
     "[index_name] ",
     "<query_bin> ",
     "<truthset> ",
+    "<log_prefix> ",
     "<single_file_index(0/1)> ",
     "<n_iters> ",
     "<range> ",
@@ -234,7 +245,7 @@ int main(int argc, char** argv) {
     "<recall_k> ",
     "<search_L> "
   };
-  if (argc != args.size() + 1) {
+  if (argc < args.size() + 1) {
     diskann::cout << "Usage: " << argv[0];
     for(auto arg: args){
       diskann::cout << arg;
@@ -250,14 +261,18 @@ int main(int argc, char** argv) {
   std::string index_name = argv[arg_no++];
   ::query_file = std::string(argv[arg_no++]);
   ::truthset_file = std::string(argv[arg_no++]);
+  ::log_prefix = std::string(argv[arg_no++]);
   bool        single_file = atoi(argv[arg_no++]) == 1;
   int         n_iters = atoi(argv[arg_no++]);
   uint32_t    range = (uint32_t) atoi(argv[arg_no++]);
   float       alpha = (float) atof(argv[arg_no++]);
   uint32_t    recall_k = (uint32_t) atoi(argv[arg_no++]);
-  uint32_t    L = (uint32_t) atoi(argv[arg_no++]);
-  if (L >= recall_k)
+  while(arg_no < argc){
+    uint32_t    L = (uint32_t) atoi(argv[arg_no++]);
+    if (L >= recall_k)
       ::Lvec.push_back(L);
+  }
+  
 
   std::cout << "Assigning parameters" << std::endl;
   params[std::string("n_iters")] = n_iters;
@@ -268,11 +283,15 @@ int main(int argc, char** argv) {
   params[std::string("disk_search_node_cache_count")] = 100;
   params[std::string("disk_search_nthreads")] = 16;
   params[std::string("beam_width")] = 4;
-  params[std::string("L")] = L;
+  params[std::string("L")] = 75;
   mem_alpha = alpha;
   merge_alpha = alpha;
   params[std::string("merge_maxc")] = (uint32_t) (range * 2.5);
   ::save_index_as_one_file = single_file;
+  // load truthset
+  std::cout << "Loading truthset : " << ::truthset_file << std::endl;
+  diskann::load_truthset(::truthset_file, ::gt_ids, ::gt_dists, ::gt_num, ::gt_dim,
+                         &::gt_tags);
 
   std::cout << "Calling run_all_iters()" << std::endl;
   if (index_type == std::string("float")) {
@@ -287,6 +306,9 @@ int main(int argc, char** argv) {
   } else {
     std::cout << "Unsupported type : " << index_type << "\n";
   }
+  delete[] ::gt_ids;
+  delete[] ::gt_dists;
+  delete[] ::gt_tags;
   std::cout << "Exiting\n";
   return 0;
 }

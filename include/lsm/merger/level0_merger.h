@@ -38,21 +38,23 @@ class Level0Merger : public LevelMerger<T, TagT> {
                 std::vector<const std::vector<TagT>*> &deleted_tags,
                 std::string &working_folder) override;
     void merge(std::string out_disk_index_path,
-                std::string &working_folder);
+                std::string &working_folder,
+                diskann::MergeStats* stats = nullptr);
   private:
-    void MergeImpl();
-    void DeletePhase();
-    void InsertPhase();
-    void PatchPhase();
+    void MergeImpl(diskann::MergeStats* stats = nullptr);
+    void DeletePhase(diskann::MergeStats* stats = nullptr);
+    void InsertPhase(diskann::MergeStats* stats = nullptr);
+    void PatchPhase(diskann::MergeStats* stats = nullptr);
+    void DeletePhaseWithSingleScan(diskann::MergeStats* stats = nullptr);
     void InitIndexPaths(std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> dist_index,
                 std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> &src_indexes,
                 std::string out_disk_index_path,
                 std::string  &working_folder);
     void ExpandIntermediateIndexFile(DiskIndexFileMeta& temp_index_file_meta,
-                                    uint32_t new_max_pts);
+                                    uint32_t new_max_pts, diskann::MergeStats* stats = nullptr);
     bool CopyAndExpandFile(const std::string& srcPath, const std::string& destPath, std::streamsize expansionSize);
     bool CopyFile(const std::string& srcPath, const std::string& destPath);
-    bool ExpandFile(const std::string& filePath, std::streamsize targetSize);
+    uint64_t ExpandFile(const std::string& filePath, std::streamsize targetSize);
     uint32_t ComputeNewMaxPts();
     std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> from_indexes;
     std::shared_ptr<PQFlashIndexProxy<T,TagT>> to_index;

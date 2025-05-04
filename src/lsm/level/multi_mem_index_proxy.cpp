@@ -3,7 +3,6 @@
 namespace lsmidx{
   template<typename T, typename TagT>
 void MultiInMemIndexProxy<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active_tags){
-    // auto delete_lock = this->GetReadDeleteLock();
     size_t size = this->indexes.size();
     // acquire locks
     auto cur_lock = GetCurrentMutexReadLock();
@@ -41,8 +40,6 @@ MultiInMemIndexProxy<T, TagT>::MultiInMemIndexProxy(diskann::Metric dist_metric,
         ));
     }
     this->active_states.reserve(num);
-    // this->index_clearing_states.reserve(num);
-    // this->clear_locks.reserve(num);
     for(int i = 0; i < num; i++){
         this->active_states.emplace_back(std::make_unique<std::atomic_bool>(false));
         // this->index_clearing_states.emplace_back(std::make_unique<std::atomic_bool>(false));
@@ -55,7 +52,7 @@ MultiInMemIndexProxy<T, TagT>::MultiInMemIndexProxy(diskann::Metric dist_metric,
     this->current = 0;
 }
 template<typename T, typename TagT>
-void MultiInMemIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, [[maybe_unused]] diskann::QueryStats * stats){
+void MultiInMemIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options,[[maybe_unused]] std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, [[maybe_unused]] diskann::QueryStats * stats){
   size_t size = this->indexes.size();
   std::vector<std::vector<diskann::Neighbor_Tag<TagT>>> local_res;
   local_res.resize(size);
@@ -64,13 +61,11 @@ void MultiInMemIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann
   for(size_t i = 0; i < size; i++){
     lock_vec.emplace_back(this->GetSubReadLock(i));
   }
+  std::vector<lsmidx::TagDeleter<TagT>*> empty_exclude_set_list;
   //check each memory index - if non empty and not being currently cleared - search and get top K active tags 
   for(size_t i = 0;i<size;i++){
-    // if(this->index_clearing_states[i]->load() == true){
-    //     continue;
-    // }
     std::shared_ptr<lsmidx::InMemIndexProxy<T, TagT>>& index = this->indexes[i];
-    index->KNNQuery(query, local_res[i], options);
+    index->KNNQuery(query, local_res[i], options, empty_exclude_set_list);
   }
   // each component filter delete set younger than itself
   
@@ -95,7 +90,6 @@ int MultiInMemIndexProxy<T, TagT>::LazyDelete(TagT tag){
         diskann::cout << "Active index indicated as mem_index_"<< this->current << "but it cannot accept insertions" << std::endl;
         return -1;
     }
-    // auto write_lock = this->GetSubWriteLock(this->current);
     auto read_lock = this->GetSubReadLock(this->current);
     this->delete_tag_set.Insert(tag);
     this->indexes[this->current]->LazyDelete(tag);
@@ -107,25 +101,26 @@ int MultiInMemIndexProxy<T, TagT>::Put([[maybe_unused]] const WriteOptions& opti
     auto s = std::chrono::high_resolution_clock::now();
     auto cur_lock = this->GetCurrentMutexReadLock();
     auto e = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = e - s;
-    stats->get_cur_mutex_read_lock_time += diff.count();
+    
     // 确认目前所指向的index是否在工作
     if(this->active_states[this->current]->load() == false){
         diskann::cout << "Active index indicated as mem_index_"<< this->current << "but it cannot accept insertions" << std::endl;
         return -1;
     }
     auto s2 = std::chrono::high_resolution_clock::now();
-    // auto write_lock = this->GetSubWriteLock(this->current);
     auto read_lock = this->GetSubReadLock(this->current);
     auto e2 = std::chrono::high_resolution_clock::now();
     // 拿到目前指向的index并进行插入
-    auto res = this->indexes[this->current]->Put(options, key, tag);
+    auto res = this->indexes[this->current]->Put(options, key, tag, stats);
     auto e3 = std::chrono::high_resolution_clock::now();
-
-    std::chrono::duration<double> diff2 = e2 - s2;
-    std::chrono::duration<double> diff3 = e3 - e2;
-    stats->get_cur_index_read_lock_time += diff2.count();
-    stats->insert_time += diff3.count();
+    if(stats){
+        std::chrono::duration<double> diff = e - s;
+        std::chrono::duration<double> diff2 = e2 - s2;
+        std::chrono::duration<double> diff3 = e3 - e2;
+        stats->get_cur_mutex_read_lock_time += diff.count();
+        stats->get_cur_index_read_lock_time += diff2.count();
+        stats->insert_time += diff3.count();
+    }
     return res;
 }
 template<typename T, typename TagT>
@@ -142,8 +137,6 @@ int MultiInMemIndexProxy<T, TagT>::Switch(){
     // in case of dead lock
     int left = this->current<next_idx?this->current:next_idx;
     int right = this->current<next_idx?next_idx:this->current;
-    // auto lock1 = this->GetSubWriteLock(left);
-    // auto lock2 = this->GetSubWriteLock(right);
     auto lock1 = this->GetSubReadLock(left);
     auto lock2 = this->GetSubReadLock(right);
     // 将下一个活动index从非激活态设置为激活态
@@ -169,7 +162,7 @@ std::string MultiInMemIndexProxy<T, TagT>::SaveIndex(size_t idx){
     if(this->active_states[idx]->load() == true){
         return save_path;
     }
-    this->GetSubReadLock(idx);
+    auto read_lock = this->GetSubReadLock(idx);
     save_path = this->indexes[idx]->SaveIndex();
 
     return save_path;
@@ -182,18 +175,13 @@ void MultiInMemIndexProxy<T, TagT>::ClearSubIndex(size_t idx){
     if(this->active_states[idx]->load() == true){
         return;
     }
-    // 先修改对应的clear状态
-    // bool expected_clearing = false;
-    // this->index_clearing_states[idx]->compare_exchange_strong(expected_clearing, true);
-    this->GetSubWriteLock(idx);
-
-    // 进行clear
-    diskann::cout<<"clear sub index "<< idx << "in multi mem"<<std::endl;
-    this->indexes[idx]->ClearIndex();
+    {
+        auto write_lock = this->GetSubWriteLock(idx);
+        // 进行clear
+        diskann::cout<<"clear sub index "<< idx << "in multi mem"<<std::endl;
+        this->indexes[idx]->ClearIndex();
+    }
     this->RefreshDeleteTagSet();
-    // 再把clear状态修改回去
-    // expected_clearing = true;
-    // this->index_clearing_states[idx]->compare_exchange_strong(expected_clearing, false);
 
 }
 template<typename T, typename TagT>
@@ -215,9 +203,6 @@ int MultiInMemIndexProxy<T, TagT>::GetCurrentNumPoints(){
       lock_vec.emplace_back(this->GetSubReadLock(i));
   }
   for(size_t i = 0;i<this->indexes.size();i++){
-    // if(this->index_clearing_states[this->current]->load() == true){
-    //     continue;
-    // }
     sum += this->indexes[i]->GetCurrentNumPoints();
   }
   return sum;
@@ -243,6 +228,12 @@ void MultiInMemIndexProxy<T, TagT>::RefreshDeleteTagSet(){
         this->indexes[i]->Union(union_set);
     }
     this->delete_tag_set.Swap(union_set);
+}
+template<typename T, typename TagT>
+void MultiInMemIndexProxy<T, TagT>::RecalculateInsertMemIndexEntryPoint(){
+    auto cur_lock = this->GetCurrentMutexReadLock();
+    auto lock = this->GetSubReadLock(this->current);
+    this->indexes[this->current]->GetIndex()->recalculate_entry_point();
 }
 template<typename T, typename TagT>
 int MultiInMemIndexProxy<T, TagT>::GetNextSwitchIdx(){

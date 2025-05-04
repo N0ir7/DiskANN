@@ -92,9 +92,11 @@ class DiskIndexDataIterator{
         }
         return *this;
     }
-    
-    void Init(bool read_only, DiskIndexFileMeta* output_index_file_meta = nullptr);
+    bool GetNode(diskann::DiskNode<T>& node, unsigned node_id);
+    void Init(bool read_only, int sectors_per_batch, DiskIndexFileMeta* output_index_file_meta = nullptr);
     std::tuple<diskann::DiskNode<T> *, uint8_t *, TagT*> Next();
+    std::tuple<diskann::DiskNode<T>*, uint8_t *, TagT*> SeekNode(unsigned id);
+    void SeekBatch(unsigned node_id);
     std::tuple<std::vector<diskann::DiskNode<T>> *,uint8_t *, TagT*> NextBatch();
     bool HasNext();
     bool HasNextBatch();
@@ -105,6 +107,18 @@ class DiskIndexDataIterator{
     void NotifyTagFlushBack();
     double GetIOTime(){
       return io_time;
+    }
+    int GetRandomRead(){
+      return random_read_4k;
+    }
+    int GetRandomWrite(){
+      return random_write_4k;
+    }
+    int GetSeqRead(){
+      return seq_read_4k;
+    }
+    int GetSeqWrite(){
+      return seq_write_4k;
     }
   private:
     DiskIndexFileMeta index_file_meta_;
@@ -120,6 +134,7 @@ class DiskIndexDataIterator{
     bool read_only_ = true; 
     bool read_write_same_file_ = true; 
     char * buf_ = nullptr;
+    int sectors_per_batch;
     void NodeFlushBack();
     void PQCoordFlushBack();
     void TagFlushBack();
@@ -129,6 +144,10 @@ class DiskIndexDataIterator{
                     std::string data_path);
     // int sum = 0;
     double io_time = 0;
+    int random_read_4k = 0;
+    int seq_read_4k = 0;
+    int random_write_4k = 0;
+    int seq_write_4k = 0;
 };
 template<typename T,typename TagT>
 class MultiDiskIndexDataIterator{
@@ -142,10 +161,45 @@ class MultiDiskIndexDataIterator{
     tsl::robin_set<TagT>* GetCurDeleteTagSet();
     int GetCurIndexFrozenPoint();
     void Init();
+    double GetIOTime(){
+      if(iter){
+        return io_time + iter->GetIOTime();
+      }
+      return io_time;
+    }
+    int GetRandomRead(){
+      if(iter){
+        return random_read_4k + iter->GetRandomRead();
+      }
+      return random_read_4k;
+    }
+    int GetRandomWrite(){
+      if(iter){
+        return random_write_4k + iter->GetRandomWrite();
+      }
+      return random_write_4k;
+    }
+    int GetSeqRead(){
+      if(iter){
+        return seq_read_4k + iter->GetSeqRead();
+      }
+      return seq_read_4k;
+    }
+    int GetSeqWrite(){
+      if(iter){
+        return seq_write_4k + iter->GetSeqWrite();
+      }
+      return seq_write_4k;
+    }
   private:
     std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> indexes;
     std::vector<tsl::robin_set<TagT>>* deleted_tags_vec;
     std::shared_ptr<DiskIndexDataIterator<T, TagT>> iter;
     int cur = 0;
+    double io_time = 0;
+    int random_read_4k = 0;
+    int seq_read_4k = 0;
+    int random_write_4k = 0;
+    int seq_write_4k = 0;
 };
 } // namespace lsmidx

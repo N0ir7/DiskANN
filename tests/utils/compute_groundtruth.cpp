@@ -134,7 +134,7 @@ void exact_knn(const size_t dim, const size_t k,
     diskann::cout << "Computed distances for queries: [" << q_b << "," << q_e
                   << ")" << std::endl;
 
-#pragma omp parallel for schedule(dynamic, 16)
+#pragma omp parallel for schedule(dynamic, 16) num_threads(128)
     for (long long q = q_b; q < q_e; q++) {
       maxPQIFCS point_dist;
       for (_u64 p = 0; p < k; p++)
@@ -304,7 +304,7 @@ int aux_main(int argc, char **argv) {
     exact_knn(dim, k, closest_points_part, dist_closest_points_part, npoints,
               base_data, nqueries, query_data);
 
-#pragma omp parallel for schedule(dynamic, 64)
+#pragma omp parallel for schedule(dynamic, 64) num_threads(128)
     for (_u64 i = 0; i < nqueries; i++) {
       for (_u64 j = 0; j < k; j++) {
         results[i].push_back(std::make_pair(
@@ -318,7 +318,7 @@ int aux_main(int argc, char **argv) {
     diskann::aligned_free(base_data);
   }
 
-#pragma omp parallel for schedule(dynamic, 64)
+#pragma omp parallel for schedule(dynamic, 64) num_threads(128)
   for (_u64 i = 0; i < nqueries; i++) {
     std::vector<std::pair<uint32_t, float>> &cur_res = results[i];
     std::sort(cur_res.begin(), cur_res.end(), custom_dist);
@@ -340,6 +340,7 @@ int aux_main(int argc, char **argv) {
     for (uint64_t i = 0; i < nqueries * k; i++) {
       tags[i] = all_tags[closest_points[i]];
     }
+    delete[] all_tags;
   }
 
   save_groundtruth_as_one_file(gt_file, closest_points, dist_closest_points,

@@ -46,7 +46,7 @@
 #ifdef _WINDOWS
 #include <xmmintrin.h>
 #endif
-
+#include "percentile_stats.h"
 #include "Neighbor_Tag.h"
 // only L2 implemented. Need to implement inner product search
 
@@ -127,6 +127,7 @@ namespace diskann {
     memset(_data, 0,
            _aligned_dim * (_max_points + _num_frozen_pts) * sizeof(T));
     _nd = 0;
+    _dynamic_ep = -1;
     for (size_t i = 0; i < _final_graph.size(); i++)
       _final_graph[i].clear();
 
@@ -158,6 +159,29 @@ namespace diskann {
     }
     tag_bytes_written =
         save_bin<TagT>(tags_file, tag_data, _nd + _num_frozen_pts, 1, offset);
+    delete[] tag_data;
+    return tag_bytes_written;
+  }
+
+  template<typename T, typename TagT>
+  _u64 Index<T, TagT>::save_tags_without_ep(std::string tags_file,
+                                            size_t      offset) {
+    if (!_enable_tags) {
+      diskann::cout << "Not saving tags as they are not enabled." << std::endl;
+      return 0;
+    }
+    size_t tag_bytes_written;
+    TagT  *tag_data = new TagT[_nd];
+    for (_u32 i = 0; i < _nd; i++) {
+      if (_location_to_tag.find(i) != _location_to_tag.end()) {
+        tag_data[i] = _location_to_tag[i];
+      } else {
+        // catering to future when tagT can be any type.
+        std::memset((char *) &tag_data[i], 0, sizeof(TagT));
+      }
+    }
+
+    tag_bytes_written = save_bin<TagT>(tags_file, tag_data, _nd, 1, offset);
     delete[] tag_data;
     return tag_bytes_written;
   }
@@ -543,6 +567,10 @@ namespace diskann {
       unsigned location = _tag_to_location[tag];
       return _data + (size_t) (location * _aligned_dim);
     }
+  }
+  template<typename T, typename TagT>
+  unsigned Index<T, TagT>::recalculate_entry_point() {
+    this->_dynamic_ep = calculate_entry_point();
   }
 
   /**************************************************************
@@ -1694,7 +1722,9 @@ namespace diskann {
     tsl::robin_set<unsigned> visited(10 * L);
     std::vector<Neighbor>    best, expanded_nodes_info;
     tsl::robin_set<unsigned> expanded_nodes_ids;
-
+    if (this->_dynamic_ep != -1) {
+      init_ids.emplace_back(this->_dynamic_ep);
+    }
     if (init_ids.size() == 0) {
       init_ids.emplace_back(_ep);
     }
@@ -2285,6 +2315,10 @@ namespace diskann {
     if (_support_eager_delete)
       update_in_graph();
 
+    if (this->_num_frozen_pts > 0 && this->_ep == this->_max_points &&
+        this->_delete_set.count(this->_ep)) {
+      this->_delete_set.erase(this->_ep);
+    }
     // 将所有删除的节点加入空槽集
     for (auto iter : _delete_set) {
       _empty_slots.insert(iter);
@@ -2314,9 +2348,13 @@ namespace diskann {
   }
   template<typename T, typename TagT>
   void Index<T, TagT>::consolidate_for_flush(Parameters &parameters) {
+    if (this->_num_frozen_pts > 0 && this->_ep == this->_max_points) {
+      this->_delete_set.insert(this->_ep);
+    }
     consolidate_deletes(parameters);
     compact_data();
-    compact_frozen_point();
+    this->recalculate_entry_point();
+    // compact_frozen_point();
   }
   /**
    * 冻结点（frozen point）从图的最大位置 _max_points
@@ -2457,8 +2495,7 @@ namespace diskann {
     start = std::chrono::high_resolution_clock::now();
     double copy_time = 0;
     for (unsigned old = 0; old <= _max_points; ++old) {
-      if ((new_location[old] < _max_points) ||
-          (old == _max_points)) {  // If point continues to exist
+      if ((new_location[old] < _max_points)) {  // If point continues to exist
 
         // Renumber nodes to compact the order
         for (size_t i = 0; i < _final_graph[old].size(); ++i) {
@@ -2731,7 +2768,7 @@ namespace diskann {
    */
   template<typename T, typename TagT>
   int Index<T, TagT>::insert_point(const T *point, const Parameters &parameters,
-                                   const TagT tag) {
+                                   const TagT tag, InsertStats *stats) {
     // 使用共享锁保护_update_lock，确保其他线程可以同时读取
     std::shared_lock<std::shared_timed_mutex> lock(_update_lock);
 
@@ -2761,6 +2798,7 @@ namespace diskann {
         _tag_to_location.erase(tag);
       }
     }
+    auto s = std::chrono::high_resolution_clock::now();
     // 为新点预留位置
     auto location = reserve_location();
 
@@ -2796,7 +2834,7 @@ namespace diskann {
             -1, __FUNCSIG__, __FILE__, __LINE__);
       }
     }
-
+    auto e = std::chrono::high_resolution_clock::now();
     // 更新标签映射
     {
       std::unique_lock<std::shared_timed_mutex> lock(_tag_lock);
@@ -2804,12 +2842,12 @@ namespace diskann {
       _tag_to_location[tag] = location;
       _location_to_tag[location] = tag;
     }
-
+    auto e2 = std::chrono::high_resolution_clock::now();
     // 将数据点插入_data数组中的相应位置
     auto offset_data = _data + (size_t) _aligned_dim * location;
     memset((void *) offset_data, 0, sizeof(T) * _aligned_dim);
     memcpy((void *) offset_data, point, sizeof(T) * _dim);
-
+    auto e3 = std::chrono::high_resolution_clock::now();
     pool.clear();
     tmp.clear();
     visited.clear();
@@ -2827,10 +2865,11 @@ namespace diskann {
         visited.erase((unsigned) location);
         break;
       }
+    auto e3_1 = std::chrono::high_resolution_clock::now();
     // 修剪邻居列表
     prune_neighbors(location, pool, parameters, pruned_list);
     assert(_final_graph.size() == _max_points + _num_frozen_pts);
-
+    auto e3_2 = std::chrono::high_resolution_clock::now();
     // 如果支持即时删除，则需要更新入边邻接表
     if (_support_eager_delete) {
       for (unsigned i = 0; i < _final_graph[location].size(); i++) {
@@ -2864,13 +2903,32 @@ namespace diskann {
         }
       }
     }
-
+    auto e4 = std::chrono::high_resolution_clock::now();
     assert(_final_graph[location].size() <= range);
     // 修改其他点的出边邻居表
     if (_support_eager_delete)
       inter_insert(location, pruned_list, parameters, 1);
     else
       inter_insert(location, pruned_list, parameters, 0);
+    auto e5 = std::chrono::high_resolution_clock::now();
+    if (stats) {
+      std::chrono::duration<double> diff = e - s;
+      std::chrono::duration<double> diff2 = e2 - e;
+      std::chrono::duration<double> diff3 = e3 - e2;
+      std::chrono::duration<double> diff3_1 = e3_1 - e3;
+      std::chrono::duration<double> diff3_2 = e3_2 - e3_1;
+      std::chrono::duration<double> diff3_3 = e4 - e3_2;
+      std::chrono::duration<double> diff4 = e4 - e3;
+      std::chrono::duration<double> diff5 = e5 - e4;
+      stats->reserve_location_while_insert += diff.count();
+      stats->insert_tag_while_insert += diff2.count();
+      stats->insert_vec_while_insert += diff3.count();
+      stats->search_while_insert += diff3_1.count();
+      stats->prune_while_insert += diff3_2.count();
+      stats->insert_neighbor_while_insert += diff3_3.count();
+      stats->insert_neighbor += diff4.count();
+      stats->insert_backward_while_insert += diff5.count();
+    }
     return 0;
   }
 

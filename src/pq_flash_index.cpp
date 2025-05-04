@@ -925,7 +925,8 @@ namespace diskann {
   template<typename T, typename TagT>
   size_t PQFlashIndex<T, TagT>::cached_beam_search(
       const T *query, const _u64 k_search, const _u64 l_search, TagT *res_tags,
-      float *distances, const _u64 beam_width, QueryStats *stats) {
+      float *distances, const _u64 beam_width, QueryStats *stats,
+      ThreadData<T> *passthrough_data) {
     // iterate to fixed point
     std::vector<Neighbor> expanded_nodes_info;
     expanded_nodes_info.reserve(2 * l_search);
@@ -933,7 +934,40 @@ namespace diskann {
         coord_map;  // TODO: 这里实际上不需要传coord_map
 
     this->disk_iterate_to_fixed_point(query, (_u32) l_search, (_u32) beam_width,
-                                      expanded_nodes_info, &coord_map, stats);
+                                      expanded_nodes_info, &coord_map, stats,
+                                      passthrough_data);
+    // fill in `indices`, `distances`
+    _u64 res_count = 0;
+    for (uint32_t i = 0; i < l_search && res_count < k_search; i++) {
+      if (this->num_frozen_points == 1 &&
+          expanded_nodes_info[i].id == this->frozen_location)
+        continue;
+
+      if (distances != nullptr) {
+        distances[res_count] = expanded_nodes_info[i].distance;
+      }
+      if (res_tags != nullptr && this->tags != nullptr) {
+        res_tags[res_count] = this->tags[expanded_nodes_info[i].id];
+      }
+      res_count++;
+    }
+    return res_count;
+  }
+  template<typename T, typename TagT>
+  size_t PQFlashIndex<T, TagT>::cached_beam_search_excludes(
+      const T *query, const _u64 k_search, const _u64 l_search, TagT *res_tags,
+      float *distances, const _u64 beam_width,
+      std::vector<lsmidx::TagDeleter<TagT> *> &exclude_set_list,
+      QueryStats *stats, ThreadData<T> *passthrough_data) {
+    // iterate to fixed point
+    std::vector<Neighbor> expanded_nodes_info;
+    expanded_nodes_info.reserve(2 * l_search);
+    tsl::robin_map<uint32_t, T *>
+        coord_map;  // TODO: 这里实际上不需要传coord_map
+
+    this->disk_iterate_to_fixed_point_excludes(
+        query, (_u32) l_search, (_u32) beam_width, expanded_nodes_info,
+        exclude_set_list, &coord_map, stats, passthrough_data);
     // fill in `indices`, `distances`
     _u64 res_count = 0;
     for (uint32_t i = 0; i < l_search && res_count < k_search; i++) {
@@ -983,6 +1017,57 @@ namespace diskann {
 
     return res_count;
   }
+  template<typename T, typename TagT>
+  ThreadData<T> PQFlashIndex<T, TagT>::pop_thread_data() {
+    ThreadData<T> data;
+    data = this->thread_data.pop();
+    while (data.scratch.sector_scratch == nullptr) {
+      this->thread_data.wait_for_push_notify();
+      data = this->thread_data.pop();
+    }
+    data.is_precompute_chunks = false;
+    return data;
+  }
+  template<typename T, typename TagT>
+  void PQFlashIndex<T, TagT>::push_thread_data(ThreadData<T> data) {
+    data.is_precompute_chunks = false;
+    this->thread_data.push(data);
+    this->thread_data.push_notify_all();
+  }
+  template<typename T, typename TagT>
+  void PQFlashIndex<T, TagT>::precompute_chunk_distance(ThreadData<T> &data,
+                                                        const T       *query1) {
+    if (data_is_normalized) {
+      // Data has been normalized. Normalize search vector too.
+      float norm = diskann::compute_l2_norm(query1, this->data_dim);
+      for (uint32_t i = 0; i < this->data_dim; i++) {
+        data.scratch.aligned_query_float[i] = query1[i] / norm;
+      }
+      for (uint32_t i = 0; i < this->data_dim; i++) {
+        data.scratch.aligned_query_T[i] =
+            (T) data.scratch.aligned_query_float[i];
+      }
+    } else {
+      for (uint32_t i = 0; i < this->data_dim; i++) {
+        data.scratch.aligned_query_float[i] = query1[i];
+      }
+      memcpy(data.scratch.aligned_query_T, query1, this->data_dim * sizeof(T));
+    }
+    const T     *query = data.scratch.aligned_query_T;
+    const float *query_float = data.scratch.aligned_query_float;
+
+    IOContext &ctx = data.ctx;
+    auto       query_scratch = &(data.scratch);
+
+    // reset query
+    query_scratch->reset();
+
+    // 调用 PQ 表的方法 populate_chunk_distances，计算查询向量与 PQ 块中心的距离
+    // query <-> PQ chunk centers distances
+    float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+    pq_table.populate_chunk_distances(query, pq_dists);
+    data.is_precompute_chunks = true;
+  }
   /**
    * query1: 查询向量
    * l_search: 搜索列表的长度L
@@ -1019,31 +1104,39 @@ namespace diskann {
     } else {  // 如果传递了 passthrough_data，则直接使用
       data = *passthrough_data;
     }
-    /**
-     * 如果数据被归一化，首先将查询向量 query1 归一化，
-     * 最终将归一化后的向量存储在 aligned_query_float 和 aligned_query_T 中
-     */
-    if (data_is_normalized) {
-      // Data has been normalized. Normalize search vector too.
-      float norm = diskann::compute_l2_norm(query1, this->data_dim);
-      for (uint32_t i = 0; i < this->data_dim; i++) {
-        data.scratch.aligned_query_float[i] = query1[i] / norm;
-      }
-      for (uint32_t i = 0; i < this->data_dim; i++) {
-        data.scratch.aligned_query_T[i] =
-            (T) data.scratch.aligned_query_float[i];
-      }
-    } else {
-      for (uint32_t i = 0; i < this->data_dim; i++) {
-        data.scratch.aligned_query_float[i] = query1[i];
-      }
-      memcpy(data.scratch.aligned_query_T, query1, this->data_dim * sizeof(T));
-    }
+
     const T     *query = data.scratch.aligned_query_T;
     const float *query_float = data.scratch.aligned_query_float;
 
     IOContext &ctx = data.ctx;
     auto       query_scratch = &(data.scratch);
+    float     *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+    if (!data.is_precompute_chunks) {
+      /**
+       * 如果数据被归一化，首先将查询向量 query1 归一化，
+       * 最终将归一化后的向量存储在 aligned_query_float 和 aligned_query_T 中
+       */
+      if (data_is_normalized) {
+        // Data has been normalized. Normalize search vector too.
+        float norm = diskann::compute_l2_norm(query1, this->data_dim);
+        for (uint32_t i = 0; i < this->data_dim; i++) {
+          data.scratch.aligned_query_float[i] = query1[i] / norm;
+        }
+        for (uint32_t i = 0; i < this->data_dim; i++) {
+          data.scratch.aligned_query_T[i] =
+              (T) data.scratch.aligned_query_float[i];
+        }
+      } else {
+        for (uint32_t i = 0; i < this->data_dim; i++) {
+          data.scratch.aligned_query_float[i] = query1[i];
+        }
+        memcpy(data.scratch.aligned_query_T, query1,
+               this->data_dim * sizeof(T));
+      }
+
+      // reset query
+      query_scratch->reset();
+    }
 
     // reset query
     query_scratch->reset();
@@ -1063,8 +1156,10 @@ namespace diskann {
 
     // 调用 PQ 表的方法 populate_chunk_distances，计算查询向量与 PQ 块中心的距离
     // query <-> PQ chunk centers distances
-    float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
-    pq_table.populate_chunk_distances(query, pq_dists);
+    // float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+    if (!data.is_precompute_chunks) {
+      pq_table.populate_chunk_distances(query, pq_dists);
+    }
 
     // query <-> neighbor list
     float *dist_scratch = query_scratch->aligned_dist_scratch;
@@ -1403,6 +1498,431 @@ namespace diskann {
   }
 
   template<typename T, typename TagT>
+  void PQFlashIndex<T, TagT>::disk_iterate_to_fixed_point_excludes(
+      const T *query1, const uint32_t l_search, const uint32_t beam_width,
+      std::vector<Neighbor>                   &expanded_nodes_info,
+      std::vector<lsmidx::TagDeleter<TagT> *> &exclude_set_list,
+      tsl::robin_map<uint32_t, T *> *coord_map, QueryStats *stats,
+      ThreadData<T> *passthrough_data) {
+    // only pull from sector scratch if ThreadData<T> not passed as arg
+
+    // 线程数据处理
+    ThreadData<T> data;
+    // 如果 passthrough_data
+    // 为空，函数从线程队列中弹出一个线程数据对象，并确保其有足够的 scratch 空间
+    if (passthrough_data == nullptr) {
+      data = this->thread_data.pop();
+      while (data.scratch.sector_scratch == nullptr) {
+        this->thread_data.wait_for_push_notify();
+        data = this->thread_data.pop();
+      }
+    } else {  // 如果传递了 passthrough_data，则直接使用
+      data = *passthrough_data;
+    }
+
+    const T     *query = data.scratch.aligned_query_T;
+    const float *query_float = data.scratch.aligned_query_float;
+
+    IOContext &ctx = data.ctx;
+    auto       query_scratch = &(data.scratch);
+    float     *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+    if (!data.is_precompute_chunks) {
+      /**
+       * 如果数据被归一化，首先将查询向量 query1 归一化，
+       * 最终将归一化后的向量存储在 aligned_query_float 和 aligned_query_T 中
+       */
+      if (data_is_normalized) {
+        // Data has been normalized. Normalize search vector too.
+        float norm = diskann::compute_l2_norm(query1, this->data_dim);
+        for (uint32_t i = 0; i < this->data_dim; i++) {
+          data.scratch.aligned_query_float[i] = query1[i] / norm;
+        }
+        for (uint32_t i = 0; i < this->data_dim; i++) {
+          data.scratch.aligned_query_T[i] =
+              (T) data.scratch.aligned_query_float[i];
+        }
+      } else {
+        for (uint32_t i = 0; i < this->data_dim; i++) {
+          data.scratch.aligned_query_float[i] = query1[i];
+        }
+        memcpy(data.scratch.aligned_query_T, query1,
+               this->data_dim * sizeof(T));
+      }
+
+      // reset query
+      query_scratch->reset();
+    }
+
+    // reset query
+    query_scratch->reset();
+
+    // scratch space to compute distances between FP32 Query and INT8 data
+    float *scratch = query_scratch->aligned_scratch;
+    _mm_prefetch((char *) scratch, _MM_HINT_T0);
+
+    // pointers to buffers for data
+    T    *data_buf = query_scratch->coord_scratch;
+    _u64 &data_buf_idx = query_scratch->coord_idx;
+    _mm_prefetch((char *) data_buf, _MM_HINT_T1);
+
+    // sector scratch
+    char *sector_scratch = query_scratch->sector_scratch;
+    _u64 &sector_scratch_idx = query_scratch->sector_idx;
+
+    // 调用 PQ 表的方法 populate_chunk_distances，计算查询向量与 PQ 块中心的距离
+    // query <-> PQ chunk centers distances
+    // float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+    if (!data.is_precompute_chunks) {
+      pq_table.populate_chunk_distances(query, pq_dists);
+    }
+
+    // query <-> neighbor list
+    float *dist_scratch = query_scratch->aligned_dist_scratch;
+    _u8   *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
+
+    // lambda to batch compute query<-> node distances in PQ space
+    // lambda函数用于计算PQ空间中查询点与节点之间的距离
+    auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
+                                                            const _u64 n_ids,
+                                                            float *dists_out) {
+      ::aggregate_coords(ids, n_ids, this->data, this->n_chunks,
+                         pq_coord_scratch);
+      ::pq_dist_lookup(pq_coord_scratch, n_ids, this->n_chunks, pq_dists,
+                       dists_out);
+    };
+
+    Timer                 query_timer, io_timer, cpu_timer;
+    std::vector<Neighbor> retset;
+    retset.resize(l_search + 1);
+    tsl::robin_set<_u64> visited(4096);
+
+    // re-naming `expanded_nodes_info` to not change rest of the code
+    std::vector<Neighbor> &full_retset = expanded_nodes_info;
+    full_retset.reserve(4096);
+    _u32                        best_medoid = 0;
+    float                       best_dist = (std::numeric_limits<float>::max)();
+    std::vector<SimpleNeighbor> medoid_dists;
+    // 遍历所有 medoid，找到与查询向量距离最短的 medoid 作为入口点
+    for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
+      float cur_expanded_dist = dist_cmp_float->compare(
+          query_float, centroid_data + aligned_dim * cur_m,
+          (unsigned) aligned_dim);
+      if (cur_expanded_dist < best_dist) {
+        best_medoid = medoids[cur_m];
+        best_dist = cur_expanded_dist;
+      }
+    }
+
+    compute_dists(&best_medoid, 1, dist_scratch);
+    retset[0].id = best_medoid;
+    retset[0].distance = dist_scratch[0];
+    retset[0].flag = true;
+    visited.insert(best_medoid);
+
+    unsigned cur_list_size = 1;
+    /* 按照距离去对搜索列表排序，距离目标向量近的靠前
+     * 此后，搜索列表一直将是有序的，后续再向搜索列表插入数据采取的是插入排序的策略
+     */
+    std::sort(retset.begin(), retset.begin() + cur_list_size);
+
+    unsigned cmps = 0;  // 记录比较次数（访问了的邻居的数量）
+    unsigned hops = 0;  // 记录跳跃次数（拓展了的点的数量)
+    unsigned num_ios = 0;  // 记录IO操作数
+    unsigned k =
+        0;  // 当前处理的节点下标（不是节点ID，是节点在搜索列表中的下标）
+
+    // cleared every iteration
+    std::vector<unsigned>                    frontier;
+    std::vector<std::pair<unsigned, char *>> frontier_nhoods;
+    std::vector<AlignedRead>                 frontier_read_reqs;
+    std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
+        cached_nhoods;
+
+    while (k < cur_list_size) {
+      auto nk = cur_list_size;
+      // clear iteration state
+      frontier.clear();
+      frontier_nhoods.clear();
+      frontier_read_reqs.clear();
+      cached_nhoods.clear();
+      sector_scratch_idx = 0;
+      // find new beam
+      // WAS: _u64 marker = k - 1;
+      /**
+       * 遍历候选节点
+       * retset，将这些节点分成缓存命中的节点和需要从磁盘读取的节点：
+       * 如果节点的邻居信息已经缓存，加入 cached_nhoods 以便直接处理；
+       * 否则加入 frontier，表示后续需要从磁盘读取该节点的邻居信息。
+       * 该过程受束宽 beam_width 限制，确保一次迭代处理的节点数量不会超过限制
+       */
+      _u32 marker = k;
+      _u32 num_seen = 0;
+      while (marker < cur_list_size && frontier.size() < beam_width &&
+             num_seen < beam_width) {
+        if (retset[marker].flag) {
+          num_seen++;
+          auto iter = nhood_cache.find(retset[marker].id);
+          if (iter != nhood_cache.end()) {
+            cached_nhoods.push_back(
+                std::make_pair(retset[marker].id, iter->second));
+            if (stats != nullptr) {
+              stats->n_cache_hits++;
+            }
+          } else {
+            frontier.push_back(retset[marker].id);
+          }
+          retset[marker].flag = false;
+          if (this->count_visited_nodes) {
+            reinterpret_cast<std::atomic<_u32> &>(
+                this->node_visit_counter[retset[marker].id].second)
+                .fetch_add(1);
+          }
+        }
+        marker++;
+      }
+      /**
+       * 从磁盘读取不在缓存中的节点邻居信息
+       * 读取完成后，邻居信息会被存储在指定的内存区域（sector_scratch中）
+       */
+      // read nhoods of frontier ids
+      if (!frontier.empty()) {
+        if (stats != nullptr)
+          stats->n_hops++;  // 记录拓展的次数
+        for (_u64 i = 0; i < frontier.size(); i++) {
+          auto                    id = frontier[i];
+          std::pair<_u32, char *> fnhood;
+          fnhood.first = id;
+          fnhood.second = sector_scratch + sector_scratch_idx * SECTOR_LEN;
+          sector_scratch_idx++;
+          frontier_nhoods.push_back(fnhood);
+          frontier_read_reqs.emplace_back(
+              NODE_SECTOR_NO(((size_t) id)) * SECTOR_LEN, SECTOR_LEN,
+              fnhood.second);
+          if (stats != nullptr) {
+            stats->n_4k++;   // 读取4k块的次数
+            stats->n_ios++;  // I/O操作总数
+          }
+          num_ios++;  // 记录I/O次数
+        }
+        io_timer.reset();
+#ifdef USE_BING_INFRA
+        reader->read(frontier_read_reqs, ctx, true);  // async reader windows.
+#else
+        reader->read(frontier_read_reqs, ctx, false);  // synchronous IO linux
+#endif
+        if (stats != nullptr) {  // 记录这次IO的时间
+          stats->io_us += (double) io_timer.elapsed();
+        }
+      }
+
+      // process cached nhoods
+      for (auto &cached_nhood : cached_nhoods) {
+        // 从全局缓存中找到当前节点的坐标
+        auto global_cache_iter = coord_cache.find(cached_nhood.first);
+        T   *node_fp_coords = global_cache_iter->second;
+        T   *node_fp_coords_copy = data_buf + (data_buf_idx * aligned_dim);
+        data_buf_idx++;
+
+        // 将缓存中的节点坐标复制到临时缓冲区中
+        memcpy(node_fp_coords_copy, node_fp_coords, data_dim * sizeof(T));
+
+        // 计算当前节点与查询向量的真实距离
+        float cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy,
+                                                    (unsigned) aligned_dim);
+        bool  exclude_cur_node = false;
+
+        // 如果有需要排除的节点集，检查当前节点是否在排除集中
+        if (!exclude_set_list.empty()) {
+          TagT cur_node_tag = this->tags[cached_nhood.first];
+          for (auto &exclude_set : exclude_set_list) {
+            if (exclude_set->IsDelete(cur_node_tag)) {
+              exclude_cur_node = true;
+              break;
+            }
+          }
+        }
+        // only figure in final list if
+        if (!exclude_cur_node) {
+          // added for StreamingMerger calls
+          // 如果需要记录坐标，则插入到坐标映射中
+          if (coord_map != nullptr) {
+            coord_map->insert(
+                std::make_pair(cached_nhood.first, node_fp_coords_copy));
+          }
+          // 将该节点及其与查询向量的距离加入 full_retset 中
+          full_retset.push_back(
+              Neighbor((unsigned) cached_nhood.first, cur_expanded_dist, true));
+        }
+        _u64 nnbrs = cached_nhood.second.first;  // 获取当前节点的邻居数量
+        unsigned *node_nbrs =
+            cached_nhood.second.second;  // 获取当前节点的邻居节点列表
+
+        // compute node_nbrs <-> query dists in PQ space
+        cpu_timer.reset();
+        // 计算所有邻居与目标向量的距离并存储在 dist_scratch 中
+        compute_dists(node_nbrs, nnbrs, dist_scratch);
+        if (stats != nullptr) {
+          stats->n_cmps += (double) nnbrs;
+          stats->cpu_us += (double) cpu_timer.elapsed();
+        }
+
+        // process prefetched nhood
+        // 遍历邻居节点并处理每个邻居
+        for (_u64 m = 0; m < nnbrs; ++m) {
+          unsigned id = node_nbrs[m];
+          if (visited.find(id) !=
+              visited.end()) {  // 如果节点已经访问过，则跳过
+            continue;
+          } else {  // 未访问
+            visited.insert(id);
+            cmps++;
+            float dist = dist_scratch[m];
+            // diskann::cout << "cmp: " << id << ", dist: " << dist <<
+            // std::endl; std::cerr << "dist: " << dist << std::endl;
+            // 如果距离大于当前结果集中最差的距离且搜索列表长度达上限，则跳过
+            if (dist >= retset[cur_list_size - 1].distance &&
+                (cur_list_size == l_search))
+              continue;
+
+            // 将新的邻居插入到结果集中
+            Neighbor nn(id, dist, true);
+            auto     r = InsertIntoPool(
+                    retset.data(), cur_list_size,
+                    nn);  // Return position in sorted list where nn inserted.
+
+            // 如果当前搜索列表数量小于l_search，则增加数量
+            if (cur_list_size < l_search)
+              ++cur_list_size;
+
+            // 更新当前搜索列表中未进行拓展的点中距离最近的点的下标
+            if (r < nk)
+              nk = r;  // nk logs the best position in the retset that was
+            // updated
+            // due to neighbors of n.
+          }
+        }
+      }
+#ifdef USE_BING_INFRA
+      // process each frontier nhood - compute distances to unvisited nodes
+      int completedIndex = -1;
+      // If we issued read requests and if a read is complete or there are reads
+      // in wait
+      // state, then enter the while loop.
+      while (frontier_read_reqs.size() > 0 &&
+             getNextCompletedRequest(ctx, frontier_read_reqs.size(),
+                                     completedIndex)) {
+        if (completedIndex == -1) {  // all reads are waiting
+          continue;
+        }
+        auto &frontier_nhood = frontier_nhoods[completedIndex];
+        (*ctx.m_pRequestsStatus)[completedIndex] = IOContext::PROCESS_COMPLETE;
+#else
+      // 以下过程类似于上面过程
+      for (auto &frontier_nhood : frontier_nhoods) {
+#endif
+        char *node_disk_buf =
+            OFFSET_TO_NODE(frontier_nhood.second, frontier_nhood.first);
+        unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
+        _u64      nnbrs = (_u64) (*node_buf);
+        T        *node_fp_coords = OFFSET_TO_NODE_COORDS(node_disk_buf);
+        assert(data_buf_idx < MAX_N_CMPS);
+
+        T *node_fp_coords_copy = data_buf + (data_buf_idx * aligned_dim);
+        data_buf_idx++;
+        memcpy(node_fp_coords_copy, node_fp_coords, data_dim * sizeof(T));
+        float cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy,
+                                                    (unsigned) aligned_dim);
+        bool  exclude_cur_node = false;
+        if (!exclude_set_list.empty()) {
+          TagT cur_node_tag = this->tags[frontier_nhood.first];
+          for (auto &exclude_set : exclude_set_list) {
+            if (exclude_set->IsDelete(cur_node_tag)) {
+              exclude_cur_node = true;
+              break;
+            }
+          }
+        }
+        // if node is to be excluded from final search results
+        if (!exclude_cur_node) {
+          // added for StreamingMerger calls
+          if (coord_map != nullptr) {
+            coord_map->insert(
+                std::make_pair(frontier_nhood.first, node_fp_coords_copy));
+          }
+          full_retset.push_back(
+              Neighbor(frontier_nhood.first, cur_expanded_dist, true));
+        }
+        unsigned *node_nbrs = (node_buf + 1);
+        // compute node_nbrs <-> query dist in PQ space
+        cpu_timer.reset();
+        compute_dists(node_nbrs, nnbrs, dist_scratch);
+        if (stats != nullptr) {
+          stats->n_cmps += (double) nnbrs;
+          stats->cpu_us += (double) cpu_timer.elapsed();
+        }
+
+        cpu_timer.reset();
+        // process prefetch-ed nhood
+        for (_u64 m = 0; m < nnbrs; ++m) {
+          unsigned id = node_nbrs[m];
+          if (visited.find(id) != visited.end()) {
+            continue;
+          } else {
+            visited.insert(id);
+            cmps++;
+            float dist = dist_scratch[m];
+            if (stats != nullptr) {
+              stats->n_cmps++;
+            }
+            if (dist >= retset[cur_list_size - 1].distance &&
+                (cur_list_size == l_search))
+              continue;
+            Neighbor nn(id, dist, true);
+            auto     r = InsertIntoPool(
+                    retset.data(), cur_list_size,
+                    nn);  // Return position in sorted list where nn inserted.
+            if (cur_list_size < l_search)
+              ++cur_list_size;
+            if (r < nk)
+              nk = r;  // nk logs the best position in the retset that was
+                       // updated
+                       // due to neighbors of n.
+          }
+        }
+
+        if (stats != nullptr) {
+          stats->cpu_us += (double) cpu_timer.elapsed();
+        }
+      }
+
+      // update best inserted position
+      //
+      // 更新搜索列表中下一个要进行拓展的点的下标
+      if (nk <= k)
+        k = nk;  // k is the best position in retset updated in this round.
+      else
+        ++k;
+
+      hops++;
+    }
+    // re-sort by distance
+    std::sort(full_retset.begin(), full_retset.end(),
+              [](const Neighbor &left, const Neighbor &right) {
+                return left.distance < right.distance;
+              });
+
+    // return data to ConcurrentQueue only if popped from it
+    if (passthrough_data == nullptr) {
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+    }
+
+    if (stats != nullptr) {
+      stats->total_us = (double) query_timer.elapsed();
+    }
+  }
+
+  template<typename T, typename TagT>
   void PQFlashIndex<T, TagT>::compute_pq_dists(const T *query, const _u32 *ids,
                                                float     *fp_dists,
                                                const _u32 count) {
@@ -1608,7 +2128,7 @@ namespace diskann {
                         }
                         */
             assert(node.nnbrs < 512);
-            assert(node.nnbrs > 0);
+            // assert(node.nnbrs > 0);
             deleted_nodes.push_back(node);
           }
           n_scanned++;

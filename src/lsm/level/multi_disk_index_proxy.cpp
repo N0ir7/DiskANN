@@ -3,7 +3,6 @@
 namespace lsmidx{
   template<typename T, typename TagT>
 void MultiPQFlashIndexProxy<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active_tags){
-    // auto delete_lock = this->GetReadDeleteLock();
     size_t size = this->indexes.size();
     // acquire locks
     std::vector<std::shared_lock<std::shared_mutex>> lock_vec;
@@ -21,6 +20,10 @@ void MultiPQFlashIndexProxy<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active
     for(auto i : lock_idx_vec){
         this->indexes[i]->GetActiveTags(local_res[i]);
     }
+    std::sort(lock_idx_vec.begin(), lock_idx_vec.end(),
+              [this](int a, int b) {
+                  return index_timestamp[a] < index_timestamp[b];
+              });
     tsl::robin_set<TagT> filter_res;
     for(auto i : lock_idx_vec){
         if(local_res[i].empty()){
@@ -76,14 +79,13 @@ MultiPQFlashIndexProxy<T, TagT>::MultiPQFlashIndexProxy(diskann::Metric dist_met
     this->index_prefix = working_dir + '/' + lsmidx::config::leveln_index_names[0];
     int num = lsmidx::config::level0_indexes_num;
     // 初始化索引
-    // this->locks.reserve(num);
     this->active_states.reserve(num);
+    this->index_timestamp.resize(num, 0);
     for(int i = 0; i < num; i++){
         /**
          * 初始化各种状态量
         */
         this->indexes.emplace_back(std::make_shared<lsmidx::PQFlashIndexProxy<T, TagT>>(dist_metric, working_dir, i, readers[i], dims, merge_thresh, paras_disk, 0, is_single_file_index, num_threads));
-        // this->locks.emplace_back(std::make_unique<std::shared_mutex>());
         this->active_states.emplace_back(std::make_unique<std::atomic_bool>(false));
 
         // 激活
@@ -91,6 +93,7 @@ MultiPQFlashIndexProxy<T, TagT>::MultiPQFlashIndexProxy(diskann::Metric dist_met
         if(file_exists(local_index_prefix + "_disk.index")){
             bool expected_active = false;
             this->active_states[i]->compare_exchange_strong(expected_active, true);
+            this->index_timestamp[i] = ++(this->timestamp);
         }else{
             this->free_slots.push(i);
         }
@@ -119,15 +122,24 @@ std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> MultiPQFlashInd
     return res;
 }
 template<typename T, typename TagT>
-void MultiPQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats){
+size_t MultiPQFlashIndexProxy<T, TagT>::GetNonFreeIndexesSize(){
+    size_t res = 0;
+    for(size_t i = 0; i < this->indexes.size(); i++){
+        if(this->active_states[i]->load() == false){
+            continue;
+        }
+        res++;
+    }
+    return res;
+}
+template<typename T, typename TagT>
+void MultiPQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats){
 
   size_t size = this->indexes.size();
   std::vector<std::vector<diskann::Neighbor_Tag<TagT>>> local_res;
   local_res.resize(size);
-//   auto delete_lock = this->GetReadDeleteLock();
   std::vector<std::shared_lock<std::shared_mutex>> lock_vec;
   std::vector<int> lock_idx_vec;
-  lock_vec.reserve(size);
   for(size_t i = 0; i < size; i++){
       if(this->active_states[i]->load() == false){
           continue;
@@ -136,25 +148,87 @@ void MultiPQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diska
       lock_idx_vec.emplace_back(i);
   }
   
-  options.search_L = 15;
-  //check each disk index - if non empty - search and get top K active tags
-  #pragma omp parallel for schedule(dynamic, 1) num_threads(size) 
-  for(auto i : lock_idx_vec){
-    this->indexes[i]->KNNQuery(query, local_res[i], options, stats);
+  options.search_L = lsmidx::config::search_L[1];
+  int parallel_threads = lock_idx_vec.size() > 0 ? lock_idx_vec.size() : 1;
+  /**
+   * 准备好每个组件搜索需要排除的点
+  */
+  std::vector<std::vector<lsmidx::TagDeleter<TagT>*>> exclude_set_lists(lock_idx_vec.size());
+  std::sort(lock_idx_vec.begin(), lock_idx_vec.end(),
+              [this](int a, int b) {
+                  return index_timestamp[a] > index_timestamp[b];
+              }); // 从新到老
+  for(int i = 0; i < lock_idx_vec.size(); i++){
+    int idx = lock_idx_vec[i];
+    exclude_set_lists[i] = exclude_set_list;
+    exclude_set_list.push_back(&this->indexes[idx]->delete_tag_set);
   }
+  if(lsmidx::config::enable_skip && lock_idx_vec.size()>=lsmidx::config::level0_merge_index_num_thresh){
+    /**
+     * 让每个index预先计算好与PQ Chunk的距离
+     */
+    std::vector<diskann::ThreadData<T>> data_vec;
+    data_vec.resize(size);
+    std::vector<float> distances;
+    distances.resize(size, std::numeric_limits<float>::max());
 
-  // each component filter delete set younger than itself
-  std::vector<diskann::Neighbor_Tag<TagT>> filter_res;
-  for(auto i : lock_idx_vec){
-    if(local_res[i].empty()){
+    // 先获取每个索引的最短距离与总的最短距离
+    float min_dist = std::numeric_limits<float>::max();
+    #pragma omp parallel for schedule(dynamic, 1) num_threads(parallel_threads)
+    for(auto idx : lock_idx_vec){
+        auto thread_data = this->indexes[idx]->PopThreadData();
+        this->indexes[idx]->PrecomputeChunkDistance(thread_data, query);
+        float dist = this->indexes[idx]->GetMinClusterDistance(thread_data);
+        distances[idx] = dist;
+        #pragma omp critical
+        if (dist < min_dist) {
+            min_dist = dist;
+        }
+        data_vec[idx]=thread_data;
+    }
+    /**
+     * 根据PQ Chunk来淘汰一部分index
+     */
+    float relaxed_factor = lsmidx::config::relaxed_factor;
+    tsl::robin_set<int> skip;
+    // 淘汰掉所有距离大于 min_dist * relaxed_factor 的索引
+    for(auto idx : lock_idx_vec){
+        if (distances[idx] > min_dist * relaxed_factor) {
+            skip.insert(idx);
+            stats->n_skip_level0_num++;
+        }
+    }
+    
+    //check each disk index - if non empty - search and get top K active tags
+    stats->level0_num += lock_idx_vec.size()-skip.size();
+    #pragma omp parallel for schedule(dynamic, 1) num_threads(parallel_threads) 
+    for(int i = 0; i < lock_idx_vec.size(); i++){
+        int idx = lock_idx_vec[i];
+        SearchOptions tmp_opt = options;
+        if(skip.count(idx)){
+            tmp_opt.search_L = options.K;
+        }
+        this->indexes[idx]->KNNQuery(query, local_res[idx], tmp_opt, exclude_set_lists[i], stats, &(data_vec[idx]));
+        this->indexes[idx]->PushThreadData(data_vec[idx]);
+    }
+  }else{
+    stats->level0_num += lock_idx_vec.size();
+    #pragma omp parallel for schedule(dynamic, 1) num_threads(parallel_threads) 
+    for(int i = 0; i < lock_idx_vec.size(); i++){
+        int idx = lock_idx_vec[i];
+        this->indexes[idx]->KNNQuery(query, local_res[idx], options, exclude_set_lists[i], stats);
+    }
+  }
+  
+  /**
+   * 结果聚合
+  */
+  for(auto idx : lock_idx_vec){
+    if(local_res[idx].empty()){
         continue;
     }
-    // first filter delete set
-    this->indexes[i]->FilterDeletedTags(filter_res);
-    // then add cur res
-    filter_res.insert(filter_res.end(), local_res[i].begin(), local_res[i].end());
+    res.insert(res.end(), local_res[idx].begin(), local_res[idx].end());
   }
-  res.insert(res.end(), filter_res.begin(), filter_res.end());
 }
 template<typename T, typename TagT>
 void MultiPQFlashIndexProxy<T, TagT>::ReloadIndex(const std::string &disk_index_prefix, size_t idx){
@@ -169,6 +243,7 @@ void MultiPQFlashIndexProxy<T, TagT>::ReloadIndex(const std::string &disk_index_
     this->RefreshDeleteTagSet();
     bool expected_active = false;
     this->active_states[idx]->compare_exchange_strong(expected_active, true);
+    this->index_timestamp[idx] = ++(this->timestamp);
 }
 
 template<typename T, typename TagT>
@@ -183,6 +258,7 @@ void MultiPQFlashIndexProxy<T, TagT>::ClearSubIndex(size_t idx){
 
     bool expected_active = true;
     this->active_states[idx]->compare_exchange_strong(expected_active, false);
+    this->index_timestamp[idx] = 0;
 }
 template<typename T, typename TagT>
 void MultiPQFlashIndexProxy<T, TagT>::ClearIndex(){

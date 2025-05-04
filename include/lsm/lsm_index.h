@@ -37,7 +37,7 @@ class LSMVectorIndex{
     // Background merge
     
     void TriggerMergeMemIndex();
-    void TriggerMergeDiskIndex(int level);
+    void TriggerMergeDiskIndex(int level, diskann::MergeStats* stats = nullptr);
     
     // other help functions
     void SetSeachParams(const diskann::Parameters& parameters);
@@ -48,10 +48,12 @@ class LSMVectorIndex{
     void GetMedoid(std::vector<TagT>& medoid_vec);
     void ReportQueryInfo(int query_num);
     void ReportIndexInfo();
+    void RedistributeDiskIndex();
+    void RecalculateInsertMemIndexEntryPoint();
   private:
   // Background merge
   int MergeMemIndex(std::shared_ptr<lsmidx::InMemIndexProxy<T, TagT>> from_mem_index, std::shared_ptr<lsmidx::MultiPQFlashIndexProxy<T, TagT>> to_disk_index);
-  void MergeDiskIndex(std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>>& from_indexes, std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> to_index);
+  void MergeDiskIndex(std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>>& from_indexes, std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> to_index, diskann::MergeStats* stats = nullptr);
   std::shared_lock<std::shared_mutex> GetMemLevelReadLock();
   std::unique_lock<std::shared_mutex> GetMemLevelWriteLock();
   std::shared_lock<std::shared_mutex> GetDiskLevelReadLock(int level);
@@ -67,36 +69,12 @@ class LSMVectorIndex{
   // ThreadPool* search_tpool;
   diskann::Metric dist_metric;
   diskann::Distance<T>* dist_comp;
-  /**
-   * some data structures as helpers
-  */
-  // std::unordered_map<unsigned, TagT> curr_location_to_tag;
-  // std::vector<const std::vector<TagT>*> deleted_tags_vector;
-  // for global delete
-  // std::unique_ptr<MultiTagDeleter<TagT>> global_in_mem_delete_tag_set;
-  // MultiTagDeleter<TagT> global_in_mem_delete_tag_set;
-  // tsl::robin_set<TagT> deletion_set_0;
-  // tsl::robin_set<TagT> deletion_set_1;
-  // int active_delete_set = 0;                // reflects active _deletion_set
-  // std::atomic_bool _active_del_0;           // true except when being saved
-  // std::atomic_bool _active_del_1;           // true except when being saved
 
   /**
    * critical data structures
    */
   std::shared_ptr<MultiInMemIndexProxy<T, TagT>>    mem_index = nullptr;
   std::vector<std::shared_ptr<LevelIndex<T, TagT>>> disk_indexes;
-  // lsmidx::StreamingMerger<T, TagT> *  merger_ = nullptr;
-
-  /**
-   * locks and signal variables
-   */
-  // std::shared_mutex delete_lock;              // lock to access _deletion_set
-  // std::shared_mutex mem_index_lock;               // mutex to switch between mem indices
-  // std::vector<std::unique_ptr<std::shared_mutex>> disk_index_locks;  // mutex to switch between disk indices
-  // std::atomic_bool switching_disk;          // wait if true, search when false
-  // std::atomic_bool check_switch_index;      // true when switch_index acquires _index_lock in writer mode,
-                                                     // insert threads wait till it turns back to false
 
   /**
    * parameters and options

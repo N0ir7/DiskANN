@@ -30,6 +30,7 @@
                        (double) sizeof(unsigned) * SLACK_FACTOR))
 
 namespace diskann {
+  struct InsertStats;
   template<typename T, typename TagT = uint32_t>
   class Index {
    public:
@@ -51,6 +52,8 @@ namespace diskann {
     DISKANN_DLLEXPORT _u64 save_graph(std::string filename, size_t offset = 0);
     DISKANN_DLLEXPORT _u64 save_data(std::string filename, size_t offset = 0);
     DISKANN_DLLEXPORT _u64 save_tags(std::string filename, size_t offset = 0);
+    DISKANN_DLLEXPORT _u64 save_tags_without_ep(std::string filename,
+                                                size_t      offset = 0);
     DISKANN_DLLEXPORT _u64 save_delete_list(const std::string &filename,
                                             size_t             offset = 0);
 
@@ -117,8 +120,8 @@ namespace diskann {
     /* insertions possible only when id corresponding to tag does not already
      * exist in the graph */
     DISKANN_DLLEXPORT int insert_point(
-        const T *point, const Parameters &parameter,
-        const TagT tag);  // only keep point, tag, parameters
+        const T *point, const Parameters &parameter, const TagT tag,
+        InsertStats *stats = nullptr);  // only keep point, tag, parameters
     // call before triggering deleteions - sets important flags required for
     // deletion related operations
     DISKANN_DLLEXPORT int enable_delete();
@@ -192,6 +195,10 @@ namespace diskann {
     // This variable MUST be updated if the number of entries in the metadata
     // change.
     DISKANN_DLLEXPORT static const int METADATA_ROWS = 5;
+    // determines navigating node of the graph by calculating medoid of data
+    unsigned calculate_entry_point();
+
+    unsigned recalculate_entry_point();
 
     /*  Internals of the library */
    protected:
@@ -202,8 +209,6 @@ namespace diskann {
     // graph
     int generate_frozen_point();
 
-    // determines navigating node of the graph by calculating medoid of data
-    unsigned calculate_entry_point();
     // called only when _eager_delete is to be supported
     void update_in_graph();
 
@@ -283,6 +288,7 @@ namespace diskann {
     size_t   _num_frozen_pts = 0;
     unsigned _width = 0;
     unsigned _ep = 0;
+    unsigned _dynamic_ep = -1;
     bool     _has_built = false;
     bool     _saturate_graph = false;
     bool     _save_as_one_file = false;

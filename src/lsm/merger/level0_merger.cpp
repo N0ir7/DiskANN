@@ -25,127 +25,6 @@
 #include "lsm/options.h"
 
 namespace lsmidx {
-// bool load = false;
-// unsigned   *gt_ids = nullptr;
-// uint32_t   *gt_tags = nullptr;
-// float      *gt_dists = nullptr;
-// size_t      gt_num, gt_dim;
-// template<typename T, typename TagT=uint32_t>
-// void test_index(std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index){
-//   tsl::robin_set<TagT> active_tags;
-//   std::cout << "【 Load Active Tags 】" << std::endl;
-//   index->get_active_tags(active_tags);
-//   print_tags(active_tags);
-//   std::cout << "Loaded " << active_tags.size() << " tags" << std::endl;
-//   uint64_t recall_at = 5;
-//   std::string query_file = "/home/hlqiu/data/sift/sift_query.bin";
-//   std::string truthset_file = "/home/hlqiu/data/sift/sift_groundtruth.bin";
-//   // hold data
-//   T        *query = nullptr;
-//   // unsigned *gt_ids = nullptr;
-//   // uint32_t *gt_tags = nullptr;
-//   // float    *gt_dists = nullptr;
-//   size_t    query_num, query_dim, query_aligned_dim;
-
-//   std::cout << "Loading query : " << query_file << std::endl;
-//   // load query + truthset
-//   diskann::load_aligned_bin<T>(query_file, query, query_num, query_dim,
-//                                query_aligned_dim);
-//   std::cout << "Loaded query : " << truthset_file << std::endl;
-//   // std::cout << "Loading gt : " << query_file << std::endl;
-//   // diskann::load_truthset(truthset_file, gt_ids, gt_dists, gt_num, gt_dim,
-//   //                        &gt_tags);
-//   // std::cout << "Loaded gt" << std::endl;
-//   if (!load) {
-//     std::cout << "Loading truthset : " << truthset_file << std::endl;
-//     diskann::load_truthset(truthset_file, gt_ids, gt_dists, gt_num,
-//                            gt_dim, &gt_tags);
-//     load = true;
-//   }
-//   // if (gt_num != query_num) {
-//   //   std::cout << "Error. Mismatch in number of queries and ground truth data"
-//   //             << std::endl;
-//   // }
-//   std::vector<uint32_t> query_result_ids;
-//   std::vector<TagT> query_result_tags;
-//   std::vector<float>    query_result_dists;
-//   query_result_ids.resize(recall_at * query_num);
-//   query_result_dists.resize(recall_at * query_num);
-//   query_result_tags.resize(recall_at * query_num);
-//   std::vector<uint32_t> query_result_ids_32(recall_at * query_num);
-
-//   diskann::QueryStats *stats = new diskann::QueryStats[query_num];
-//   uint32_t             L = 75;
-//   std::vector<double>  latency_stats(query_num, 0);
-//   auto                 s = std::chrono::high_resolution_clock::now();
-//   omp_set_max_active_levels(4);
-// #pragma omp parallel for num_threads(6)
-//   for (_s64 i = 0; i < (int64_t) query_num; i++) {
-//     auto qs = std::chrono::high_resolution_clock::now();
-//     index->cached_beam_search(query + (i * query_aligned_dim), recall_at, L,
-//                                (query_result_tags.data() + (i * recall_at)),
-//                                query_result_dists.data() + (i * recall_at),
-//                                4,
-//                                stats + i);
-//     auto qe = std::chrono::high_resolution_clock::now();
-
-//     std::chrono::duration<double> diff = qe - qs;
-//     latency_stats[i] = diff.count() * 1000;
-//     //      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-//   }
-//   auto                          e = std::chrono::high_resolution_clock::now();
-//   std::chrono::duration<double> diff = e - s;
-//   float qps = (float) (((double) query_num) / diff.count());
-//   // compute mean recall, IOs
-//   float mean_recall = 0.0f;
-//   std::vector<uint32_t> query_result_tags2;
-//   for(auto tag : query_result_tags){
-//     query_result_tags2.emplace_back(tag);
-//   }
-//   tsl::robin_set<uint32_t> active_tags2;
-//   for(auto tag : active_tags){
-//     active_tags2.insert(tag);
-//   }
-//   mean_recall = diskann::calculate_recall(
-//       (unsigned) query_num, gt_ids, gt_dists, (unsigned) gt_dim,
-//       query_result_tags2.data(), (unsigned) recall_at, (unsigned) recall_at,
-//       active_tags2);
-//   //    mean_recall /= (float) query_num;
-//   float mean_ios = (float) diskann::get_mean_stats(
-//       stats, query_num,
-//       [](const diskann::QueryStats &stats) { return stats.n_ios; });
-//   std::sort(latency_stats.begin(), latency_stats.end());
-//   std::string recall_string = "Recall@" + std::to_string(recall_at);
-//     std::cout << std::setw(4) << "Ls" << std::setw(12) << "QPS "
-//               << std::setw(18) << "Mean Latency (ms)" << std::setw(12)
-//               << "90 Latency" << std::setw(12) << "95 Latency" << std::setw(12)
-//               << "99 Latency" << std::setw(12) << "99.9 Latency"
-//               << std::setw(12) << recall_string << std::setw(12)
-//               << "Mean disk IOs" << std::endl;
-//     std::cout
-//         << "==============================================================="
-//            "==============="
-//         << std::endl;
-//     std::cout << std::setw(4) << L << std::setw(12) << qps << std::setw(18)
-//             << ((float) std::accumulate(latency_stats.begin(),
-//                                         latency_stats.end(), 0)) /
-//                     (float) query_num
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.95 * ((double) query_num))]
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.99 * ((double) query_num))]
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.999 * ((double) query_num))]
-//             << std::setw(12) << mean_recall << std::setw(12) << mean_ios
-//             << std::endl;
-//   delete[] stats;
-//   diskann::aligned_free(query);
-//   // delete[] gt_ids;
-//   // delete[] gt_dists;
-//   // delete[] gt_tags;
-// }
 template<typename T, typename TagT>
 Level0Merger<T, TagT>::Level0Merger(
     const uint32_t ndims, diskann::Distance<T> *dist, diskann::Metric dist_metric, const uint32_t beam_width,
@@ -169,7 +48,6 @@ Level0Merger<T, TagT>::Level0Merger(
   std::string index_prefix = to_index->GetIndexPrefix();
   std::string working_dir = index_prefix.substr(0, index_prefix.find_last_of('/'));
   this->to_index = std::make_shared<lsmidx::PQFlashIndexProxy<T, TagT>>(dist_metric, working_dir, 0, this->reader, ndims, lsmidx::config::leveln_merge_thresh[0],to_index->GetParameter(), 1, single_file_index, 16);
-  // this->to_index = std::move(to_index);
   std::cout << "Level0Merger created with R=" << this->range
             << " L=" << this->l_index << " BW=" << this->beam_width
             << " MaxC=" << this->maxc << " alpha=" << this->alpha
@@ -201,71 +79,7 @@ void Level0Merger<T, TagT>::InitIndexPaths(std::shared_ptr<lsmidx::PQFlashIndexP
 
   // construct temp index meta
     std::cout << "Working folder : " << working_folder << std::endl;
-  intermediate_index_file_meta_ = DiskIndexFileMeta(getTempFilePath(working_folder, "temp_disk_index"),
-                                                    getTempFilePath(working_folder, "temp_tags"),
-                                                    getTempFilePath(working_folder, "temp_pq_compressed"),
-                                                    "");
 }
-// template<typename T, typename TagT>
-// void Level0Merger<T, TagT>::merge(const char * dist_disk_index_path,
-//                                   const std::vector<std::string> &src_index_paths,
-//                                   const char * out_disk_index_path,
-//                                   std::vector<const std::vector<TagT>*> &deleted_tags_vectors,
-//                                   std::string  &working_folder) {
-//   InitIndexPaths(dist_disk_index_path,src_index_paths,out_disk_index_path,working_folder);
-
-//   // load to disk index
-//   this->to_disk_index_merger_->InitIndexWithCache();
-//   this->to_disk_index_merger_->InitGraphDelta(0);
-  
-//   // 计算每个节点的最大度数，并设置搜索范围
-//   _u32 max_degree =
-//       (this->to_disk_index_merger_->max_node_len() - (sizeof(T) * this->ndims)) / sizeof(uint32_t) - 1;
-//   this->range = max_degree; 
-//   diskann::cout << "Setting range to: " << this->range << std::endl;
-  
-//   // 设置一些搜索与构建参数
-//   this->to_disk_index_merger_->param.beam_width = this->beam_width;
-//   this->to_disk_index_merger_->param.l_index = this->l_index;
-//   this->to_disk_index_merger_->param.range = this->range;
-//   this->to_disk_index_merger_->param.maxc = this->maxc;
-//   this->to_disk_index_merger_->param.alpha = this->alpha;
-//   this->to_disk_index_merger_->dist_cmp = this->dist_cmp;
-//   this->to_disk_index_merger_->dist_metric = this->dist_metric;
-
-//   // load from disk index
-//   this->from_disk_index_merger_->InitIndex();
-
-//   // 处理删除标签向量，生成后续删除标签集合
-//   // for (size_t j = 0; j < deleted_tags_vectors.size(); j++) {
-//   //   this->latter_deleted_tags.push_back(tsl::robin_set<TagT>());
-//   //   for (size_t i = j+1; i < deleted_tags_vectors.size(); i++) {
-//   //     for (size_t k = 0; k < deleted_tags_vectors[i]->size(); k++) {
-//   //       this->latter_deleted_tags[j].insert((*deleted_tags_vectors[i])[k]);
-//   //     }
-//   //   }
-//   // }
-//   // 将所有删除标签插入到一个全局的删除标签集合中
-//   //TODO: See if this can be included in the previous loop
-//   // for (auto &deleted_tags_vector : deleted_tags_vectors) {
-//   //   for (size_t i = 0; i < deleted_tags_vector->size(); i++) {
-//   //     this->deleted_tags.insert((*deleted_tags_vector)[i]);
-//   //   }
-//   // }
-
-//   // 分配每个线程的 scratch 空间，用于并行处理
-//   diskann::cout << "Allocating thread scratch space -- "
-//                 << PER_THREAD_BUF_SIZE / (1 << 20) << " MB / thread.\n";
-//   diskann::alloc_aligned((void **) &this->thread_pq_scratch,
-//                 MAX_N_THREADS * PER_THREAD_BUF_SIZE, SECTOR_LEN);
-//   this->thread_bufs.resize(MAX_N_THREADS);
-//   for (uint32_t i = 0; i < thread_bufs.size(); i++) {
-//     this->thread_bufs[i] = this->thread_pq_scratch + i * PER_THREAD_BUF_SIZE;
-//   }
-
-//   // 执行实际的合并操作
-//   MergeImpl();
-// }
 template<typename T, typename TagT>
 void Level0Merger<T, TagT>::merge(const char * dist_disk_index_path,
                 const std::vector<std::string> &src_index_paths,
@@ -276,7 +90,8 @@ void Level0Merger<T, TagT>::merge(const char * dist_disk_index_path,
 }
 template<typename T, typename TagT>
 void Level0Merger<T, TagT>::merge(std::string out_disk_index_path,
-                std::string &working_folder){
+                std::string &working_folder,
+                diskann::MergeStats* stats){
   InitIndexPaths(this->to_index, this->from_indexes, out_disk_index_path,working_folder);
   /**
    * initialize some to disk index merger param
@@ -308,65 +123,75 @@ void Level0Merger<T, TagT>::merge(std::string out_disk_index_path,
   }
 
   // 执行实际的合并操作
-  MergeImpl();
+  MergeImpl(stats);
 }
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::MergeImpl() {
+void Level0Merger<T, TagT>::MergeImpl(diskann::MergeStats* stats) {
 
   diskann::Timer timer;
   auto report_time = [](diskann::Timer &timer, const std::string &msg) {
     diskann::cout << "【" << msg<< " 】";
     double time = ((double) timer.elapsed_and_reset()) / (1000000.0);
     diskann::cout << " cost time: " << time << " s." << std::endl;
+    return time;
   };
   set_low_priority();
   /**
    * 1. Delete Phase
    */
-  DeletePhase();
-  report_time(timer, "Delete Phase");
+  // DeletePhase(stats);
+  DeletePhaseWithSingleScan(stats);
+  double delete_phase_time = report_time(timer, "Delete Phase");
+  if(stats){
+    stats->delete_phase_time = delete_phase_time;
+  }
   
   /**
    * 2. Insert Prepare Phase
    */
   uint32_t new_max_pts = this->ComputeNewMaxPts();
   // 在DeletePhase的最后阶段，进行了data, pq, tag写入中间文件的工作, 这里只需要针对InsertPhase阶段的点, 对上述三个文件数据进行扩充,预留好对应空间即可
-  this->ExpandIntermediateIndexFile(this->intermediate_index_file_meta_, new_max_pts);
-
+  auto s = std::chrono::high_resolution_clock::now();
+  this->ExpandIntermediateIndexFile(this->final_index_file_meta_, new_max_pts, stats);
+  auto e = std::chrono::high_resolution_clock::now();
+  if(stats){
+    std::chrono::duration<double> diff = e - s;
+    stats->delete_phase_io_time += diff.count();
+  }
   // 第四步：重新加载更新后的索引
-  this->to_disk_index_merger_->index->reload_index(this->intermediate_index_file_meta_.data_path,
-                                  this->intermediate_index_file_meta_.pq_coords_path,
-                                  this->intermediate_index_file_meta_.tag_path);
-  this->to_disk_index_merger_->meta = this->intermediate_index_file_meta_;
 
+  this->to_disk_index_merger_->index->reload_index(this->final_index_file_meta_.data_path,
+                                  this->final_index_file_meta_.pq_coords_path,
+                                  this->final_index_file_meta_.tag_path);
+  this->to_disk_index_merger_->meta = this->final_index_file_meta_;
   assert(this->to_disk_index_merger_->num_points() == new_max_pts);
 
   std::cout << "AFTER RELOAD: PQ_NChunks: " << this->to_disk_index_merger_->pq_nchunks()
             << " Disk points: " << this->to_disk_index_merger_->num_points()
             << " Frozen point id: " << this->to_disk_index_merger_->init_ids()[0] << std::endl;
   
-  report_time(timer, "Insert Prepare Phase");
-  // std::cout << "【Search after Insert Prepare Phase】"<<std::endl;
-  // test_index(this->to_disk_index_merger_->index);
+  double insert_prepare_phase_time = report_time(timer, "Insert Prepare Phase");
   /**
    * 3. insert phase
    */
-  InsertPhase();
+  InsertPhase(stats);
   // 后续不再使用from_disk_index_merger_了，提前释放资源
   this->from_disk_index_merger_.reset();
-  report_time(timer, "Insert Phase");
-  // std::cout << "【Search after Insert Phase】"<<std::endl;
-  // test_index(this->to_disk_index_merger_->index);
+  double insert_phase_time = report_time(timer, "Insert Phase");
+  if(stats){
+    stats->insert_phase_time = insert_prepare_phase_time + insert_phase_time;
+  }
   // END -- PQ data on disk consistent and in correct order
   /**
    * 
    * 4. patch phase
    */
 
-  PatchPhase();
-  report_time(timer, "Patch Phase");
-  // std::cout << "【Search after Patch Phase】"<<std::endl;
-  // test_index(this->to_disk_index_merger_->index);
+  PatchPhase(stats);
+  double patch_phase_time = report_time(timer, "Patch Phase");
+  if(stats){
+    stats->patch_phase_time = patch_phase_time;
+  }
 }
 template<typename T, typename TagT>
 uint32_t Level0Merger<T, TagT>::ComputeNewMaxPts(){
@@ -378,12 +203,9 @@ uint32_t Level0Merger<T, TagT>::ComputeNewMaxPts(){
                 << ", free: " << this->to_disk_index_merger_->free_local_ids.size() << "\n";
   // 再看现有的disk index的空闲位置数量是否充足，不充足则扩容
   uint32_t last_id = this->to_disk_index_merger_->num_points();
-  if (needed > this->to_disk_index_merger_->free_local_ids.size()) {
-    this->to_disk_index_merger_->free_local_ids.reserve(needed);
-  }
   uint32_t initial_last_id = last_id;
   while (this->to_disk_index_merger_->free_local_ids.size() < needed) {
-    this->to_disk_index_merger_->free_local_ids.insert(last_id);
+    this->to_disk_index_merger_->free_local_ids.push(last_id);
     last_id++;
   }
   diskann::cout << "expand capacity,id range: ["<<initial_last_id<<","<<last_id-1<<"]"<<std::endl;
@@ -396,29 +218,43 @@ uint32_t Level0Merger<T, TagT>::ComputeNewMaxPts(){
  * 3.再扫一遍索引，进行实际删除并写回
 */
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::DeletePhase(){
-
+void Level0Merger<T, TagT>::DeletePhase(diskann::MergeStats* stats){
   // process disk deleted tags
   this->to_disk_index_merger_->AddDeleteLocalID(this->from_disk_index_merger_->GetDeleteTagSet());
   
   // populate deleted nodes
-  tsl::robin_map<uint32_t, std::vector<uint32_t>> disk_deleted_nhoods = this->to_disk_index_merger_->PopulateNondeletedHoodsOfDeletedNodes();
+  tsl::robin_map<uint32_t, std::vector<uint32_t>> disk_deleted_nhoods = this->to_disk_index_merger_->PopulateNondeletedHoodsOfDeletedNodes(stats);
 
   // process all deletes
-  this->to_disk_index_merger_->ProcessDeletes(this->intermediate_index_file_meta_,
+  this->to_disk_index_merger_->ProcessDeletes(this->final_index_file_meta_,
                                             disk_deleted_nhoods,
-                                            this->thread_bufs); 
+                                            this->thread_bufs,
+                                            stats); 
+  // END -- graph on disk has NO deleted references, maybe some holes
+}
+template<typename T, typename TagT>
+void Level0Merger<T, TagT>::DeletePhaseWithSingleScan(diskann::MergeStats* stats){
+  auto set = this->from_disk_index_merger_->GetDeleteTagSet();
+  // process disk deleted tags
+  this->to_disk_index_merger_->AddDeleteLocalID(set);
+  
+  if(!set.empty() && !this->to_disk_index_merger_->buf_pool){
+    this->to_disk_index_merger_->buf_pool = std::make_shared<ReadOnlySectorBufferPool>();
+    this->to_disk_index_merger_->buf_pool->InitIndexReader(this->to_disk_index_merger_->meta.data_path);
+  }
+  // process all deletes
+  this->to_disk_index_merger_->ProcessDeletes(this->final_index_file_meta_, this->thread_bufs, stats); 
   // END -- graph on disk has NO deleted references, maybe some holes
 }
 /**
  * 该阶段主要就是把点及其正向边插入到索引中去，同时更新相应的PQ坐标与tag
 */
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::InsertPhase(){
+void Level0Merger<T, TagT>::InsertPhase(diskann::MergeStats* stats){
   MultiDiskIndexDataIterator<T, TagT> from_disk_index_data_iter = std::move(this->from_disk_index_merger_->GetIterator());
   from_disk_index_data_iter.Init();
   DiskIndexDataIterator<T, TagT> to_disk_index_data_iter = std::move(this->to_disk_index_merger_->GetIterator());
-  to_disk_index_data_iter.Init(false/* read_write*/);
+  to_disk_index_data_iter.Init(false/* read_write*/, 1);
   int batch_cnt = 0, num_cnt = 0;
   diskann::Timer timer;
   while (from_disk_index_data_iter.HasNextBatch()){
@@ -436,16 +272,36 @@ void Level0Merger<T, TagT>::InsertPhase(){
   }
   to_disk_index_data_iter.TryFlushBack();
   double io_time = to_disk_index_data_iter.GetIOTime();
+  if(stats){
+    stats->insert_phase_random_read_4k += to_disk_index_data_iter.GetRandomRead();
+    stats->insert_phase_random_write_4k += to_disk_index_data_iter.GetRandomWrite();
+    stats->insert_phase_seq_read_4k += to_disk_index_data_iter.GetSeqRead();
+    stats->insert_phase_seq_write_4k += to_disk_index_data_iter.GetSeqWrite();
+    stats->insert_phase_io_time += io_time;
+
+    stats->insert_phase_random_read_4k += from_disk_index_data_iter.GetRandomRead();
+    stats->insert_phase_random_write_4k += from_disk_index_data_iter.GetRandomWrite();
+    stats->insert_phase_seq_read_4k += from_disk_index_data_iter.GetSeqRead();
+    stats->insert_phase_seq_write_4k += from_disk_index_data_iter.GetSeqWrite();
+    stats->insert_phase_io_time += from_disk_index_data_iter.GetIOTime();
+  }
   diskann::cout << "read io cost time in InsertPhase: " <<  io_time << " s" << std::endl;
   // this->to_disk_index_merger_->ReportGraphDelta();
+  auto s = std::chrono::high_resolution_clock::now();
   this->to_disk_index_merger_->WriteDataFileHeaderAfterInsertPhase();
+  auto e = std::chrono::high_resolution_clock::now();
+  if(stats){
+    std::chrono::duration<double> diff = e - s;
+    stats->insert_phase_random_write_4k += 1;
+    stats->insert_phase_io_time += diff.count();
+  }
 }
 /*
  * 该阶段主要将disk index扫一遍，将backward edge插一遍
  */
 template<typename T, typename TagT>
-void Level0Merger<T, TagT>::PatchPhase(){
-  this->to_disk_index_merger_->ProcessPatch(this->final_index_file_meta_, this->thread_bufs);
+void Level0Merger<T, TagT>::PatchPhase(diskann::MergeStats* stats){
+  this->to_disk_index_merger_->ProcessPatch(this->final_index_file_meta_, this->thread_bufs, stats);
 }
 
 template<typename T, typename TagT>
@@ -509,18 +365,19 @@ bool Level0Merger<T, TagT>::CopyFile(const std::string& srcPath, const std::stri
     return true;
 }
 template<typename T, typename TagT>
-bool Level0Merger<T, TagT>::ExpandFile(const std::string& destPath, std::streamsize targetSize){
+uint64_t Level0Merger<T, TagT>::ExpandFile(const std::string& destPath, std::streamsize targetSize){
+    uint64_t bytes_written = 0;
   // 打开目标文件进行写入
     std::ofstream destFile(destPath, std::ios::binary | std::ios::app);
     if (!destFile) {
         std::cerr << "unable to open dest file: " << destPath << std::endl;
-        return false;
+        return bytes_written;
     }
     std::streamsize srcSize = destFile.tellp();
 
     // 如果目标大小小于源文件大小，则无需扩容
     if (targetSize <= srcSize) {
-        return true;
+        return bytes_written;
     }
     
     // 扩容：在目标文件末尾添加指定大小的空白字节（用 '\0' 填充）
@@ -532,14 +389,16 @@ bool Level0Merger<T, TagT>::ExpandFile(const std::string& destPath, std::streams
             destFile.put('\0');  // 写入空字节
         }
     }
+    bytes_written = expansionSize;
     std::cout<< "expand file (" << destPath << ") and expand size: " << expansionSize <<" bytes; "  << std::endl;
     destFile.close();
-    return true;
+    return bytes_written;
 }
 template<typename T, typename TagT>
 void Level0Merger<T, TagT>::ExpandIntermediateIndexFile(
                                                       DiskIndexFileMeta& temp_index_file_meta,
-                                                      uint32_t new_max_pts){
+                                                      uint32_t new_max_pts,
+                                                      diskann::MergeStats* stats){
   // 扩充 data file的大小
   std::streamsize data_file_size =
     SECTOR_LEN + (ROUND_UP(
@@ -547,7 +406,14 @@ void Level0Merger<T, TagT>::ExpandIntermediateIndexFile(
                       this->to_disk_index_merger_->nnodes_per_sector()
                     ) /this->to_disk_index_merger_->nnodes_per_sector())
                    * (uint64_t) SECTOR_LEN;
-  ExpandFile(temp_index_file_meta.data_path, data_file_size);
+  uint64_t data_file_bytes_written = ExpandFile(temp_index_file_meta.data_path, data_file_size);
+  if(stats){
+    if(data_file_bytes_written != 0){
+      int sectors = (data_file_bytes_written + SECTOR_LEN - 1) / SECTOR_LEN;
+      stats->insert_phase_random_write_4k += 1;
+      stats->insert_phase_seq_write_4k += sectors - 1;
+    }
+  }
   // 修改data file的元信息
   /**
    * HEADER -->
@@ -579,8 +445,14 @@ void Level0Merger<T, TagT>::ExpandIntermediateIndexFile(
   std::streamsize pq_file_size =
     ((uint64_t) new_max_pts * (uint64_t) this->to_disk_index_merger_->pq_nchunks()) +
     (2 * sizeof(uint32_t));
-  ExpandFile(temp_index_file_meta.pq_coords_path, pq_file_size);
-  
+  uint64_t pq_file_bytes_written = ExpandFile(temp_index_file_meta.pq_coords_path, pq_file_size);
+  if(stats){
+    if(pq_file_bytes_written != 0){
+      int sectors = (pq_file_bytes_written + SECTOR_LEN - 1) / SECTOR_LEN;
+      stats->insert_phase_random_write_4k += 1;
+      stats->insert_phase_seq_write_4k += sectors - 1;
+    }
+  }
   // 修改PQ坐标中间文件的元信息
   std::ofstream pq_writer(temp_index_file_meta.pq_coords_path, std::ios::binary | std::ios::in | std::ios::out);
   pq_writer.seekp(0, std::ios::beg);
@@ -591,7 +463,14 @@ void Level0Merger<T, TagT>::ExpandIntermediateIndexFile(
   
   // 扩充tag的中间文件
   std::streamsize tag_file_size = new_max_pts * sizeof(TagT) + 2 * sizeof(uint32_t);
-  ExpandFile(temp_index_file_meta.tag_path, tag_file_size);
+  uint64_t tag_file_bytes_written = ExpandFile(temp_index_file_meta.tag_path, tag_file_size);
+  if(stats){
+    if(tag_file_bytes_written != 0){
+      int sectors = (tag_file_bytes_written + SECTOR_LEN - 1) / SECTOR_LEN;
+      stats->insert_phase_random_write_4k += 1;
+      stats->insert_phase_seq_write_4k += sectors - 1;
+    }
+  }
   // 修改tag中间文件的元信息
   std::ofstream tag_writer(temp_index_file_meta.tag_path, std::ios::binary | std::ios::in | std::ios::out);
   tag_writer.seekp(0, std::ios::beg);

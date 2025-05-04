@@ -12,7 +12,8 @@
 // max number of points per mem index being merged in motivation -- 32k
 #define MAX_PTS_PER_MEM_INDEX_IN_MOTIVATION (uint64_t)(1 << 15)
 #define INDEX_OFFSET (uint64_t)(MAX_PTS_PER_MEM_INDEX * 4)
- 
+#define MAX_N_SECTOR_READS 128
+#define SECTOR_LEN 4096
 // MAX_INSERT_THREADS <= NUM_INDEX_LOAD_THREADS
 #define MAX_INSERT_THREADS (uint64_t) 16
 // MAX_N_THREADS <= NUM_INDEX_LOAD_THREADS
@@ -24,10 +25,16 @@ namespace lsmidx{
 namespace config {
   const int mem_indexes_num = 2;
   const int mem_merge_thresh = 1 << 14; // 16K(half of MAX_PTS_PER_MEM_INDEX_IN_MOTIVATION)
+  // const int mem_merge_thresh = 1 << 24; // 16M
+  // const int mem_merge_thresh = (1 << 14)*10; // 160M
   const int level0_merge_index_num_thresh = 3; // level0 index number
   const int level0_indexes_num = 5; // level0 index number
+  const bool enable_skip = true;
+  const float relaxed_factor = 1.6;
+  const float redistribute_factor = 0.68;
   const int num_levels = 2;
-  const int leveln_merge_thresh[3] = {10 * mem_merge_thresh, 20 * mem_merge_thresh, 100 * mem_merge_thresh}; // todo: 确定阈值
+  const int leveln_merge_thresh[3] = {10 * mem_merge_thresh, 20 * mem_merge_thresh, 100 * mem_merge_thresh};
+  const int search_L[2] = {75, 15};
   const std::string mem_index_name = "mem_index";
   const std::string level0_index_name = "level0";
   const std::vector<std::string> leveln_index_names = {"level0","level1", "level2", "level3"};

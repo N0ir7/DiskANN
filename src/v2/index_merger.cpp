@@ -1390,6 +1390,10 @@ namespace diskann {
 
     // 执行实际的合并操作
     mergeImpl();
+    // 将临时文件删除
+    delete_file(this->temp_disk_index_path);
+    delete_file(this->temp_pq_coords_path);
+    delete_file(this->temp_tags_path);
   }
 
   template<typename T, typename TagT>

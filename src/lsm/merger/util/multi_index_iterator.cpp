@@ -11,7 +11,7 @@ void MultiDiskIndexDataIterator<T, TagT>::Init(){
   }
   auto ptr = this->indexes[this->cur];
   iter = std::make_shared<DiskIndexDataIterator<T, TagT>>(DiskIndexFileMeta(ptr->GetIndexPrefix(), false),ptr->GetIndex());
-  iter->Init(true);
+  iter->Init(true, SECTORS_PER_MERGE);
 }
 template<typename T,typename TagT>
 std::tuple<diskann::DiskNode<T> *, uint8_t *, TagT*> MultiDiskIndexDataIterator<T, TagT>::Next(){
@@ -20,7 +20,7 @@ std::tuple<diskann::DiskNode<T> *, uint8_t *, TagT*> MultiDiskIndexDataIterator<
   }
   auto ptr = this->indexes[++this->cur];
   iter = std::make_shared<DiskIndexDataIterator<T, TagT>>(DiskIndexFileMeta(ptr->GetIndexPrefix(), false),ptr->GetIndex());
-  iter->Init(true);
+  iter->Init(true, SECTORS_PER_MERGE);
   return Next();
 }
 template<typename T,typename TagT>
@@ -36,9 +36,17 @@ std::tuple<std::vector<diskann::DiskNode<T>> *,uint8_t *, TagT*> MultiDiskIndexD
   if(iter && iter->HasNextBatch()){
     return iter->NextBatch();
   }
+  /**
+   * 更换指向下一个索引的迭代器
+  */
+  this->io_time += iter->GetIOTime();
+  this->random_read_4k += iter->GetRandomRead();
+  this->seq_read_4k += iter->GetSeqRead();
+  this->random_write_4k += iter->GetRandomWrite();
+  this->seq_write_4k += iter->GetSeqWrite();
   auto ptr = this->indexes[++this->cur];
   iter = std::make_shared<DiskIndexDataIterator<T, TagT>>(DiskIndexFileMeta(ptr->GetIndexPrefix(), false),ptr->GetIndex());
-  iter->Init(true);
+  iter->Init(true, SECTORS_PER_MERGE);
   return NextBatch();
 }
 template<typename T,typename TagT>

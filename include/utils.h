@@ -158,8 +158,6 @@ inline bool file_exists(const std::string& name, bool dirCheck = false) {
   val = _stat64(name.c_str(), &buffer);
 #endif
 
-  diskann::cout << " Stat(" << name.c_str() << ") returned: " << val
-                << std::endl;
   if (val != 0) {
     switch (errno) {
       case EINVAL:

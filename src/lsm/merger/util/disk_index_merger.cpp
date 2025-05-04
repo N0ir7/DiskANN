@@ -6,127 +6,6 @@
 
 namespace lsmidx
 {
-// bool load2 = false;
-// unsigned   *gt_ids2 = nullptr;
-// uint32_t   *gt_tags2 = nullptr;
-// float      *gt_dists2 = nullptr;
-// size_t      gt_num2, gt_dim2;
-// template<typename T, typename TagT=uint32_t>
-// void test_index(std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index){
-//   tsl::robin_set<TagT> active_tags;
-//   std::cout << "【 Load Active Tags 】" << std::endl;
-//   index->get_active_tags(active_tags);
-//   print_tags(active_tags);
-//   std::cout << "Loaded " << active_tags.size() << " tags" << std::endl;
-//   uint64_t recall_at = 5;
-//   std::string query_file = "/home/hlqiu/data/sift/sift_query.bin";
-//   std::string truthset_file = "/home/hlqiu/data/sift/sift_groundtruth.bin";
-//   // hold data
-//   T        *query = nullptr;
-//   // unsigned *gt_ids = nullptr;
-//   // uint32_t *gt_tags = nullptr;
-//   // float    *gt_dists = nullptr;
-//   size_t    query_num, query_dim, query_aligned_dim;
-
-//   std::cout << "Loading query : " << query_file << std::endl;
-//   // load query + truthset
-//   diskann::load_aligned_bin<T>(query_file, query, query_num, query_dim,
-//                                query_aligned_dim);
-//   std::cout << "Loaded query : " << truthset_file << std::endl;
-//   // std::cout << "Loading gt : " << query_file << std::endl;
-//   // diskann::load_truthset(truthset_file, gt_ids, gt_dists, gt_num, gt_dim,
-//   //                        &gt_tags);
-//   // std::cout << "Loaded gt" << std::endl;
-//   if (!load2) {
-//     std::cout << "Loading truthset : " << truthset_file << std::endl;
-//     diskann::load_truthset(truthset_file, gt_ids2, gt_dists2, gt_num2,
-//                            gt_dim2, &gt_tags2);
-//     load2 = true;
-//   }
-//   // if (gt_num != query_num) {
-//   //   std::cout << "Error. Mismatch in number of queries and ground truth data"
-//   //             << std::endl;
-//   // }
-//   std::vector<uint32_t> query_result_ids;
-//   std::vector<TagT> query_result_tags;
-//   std::vector<float>    query_result_dists;
-//   query_result_ids.resize(recall_at * query_num);
-//   query_result_dists.resize(recall_at * query_num);
-//   query_result_tags.resize(recall_at * query_num);
-//   std::vector<uint32_t> query_result_ids_32(recall_at * query_num);
-
-//   diskann::QueryStats *stats = new diskann::QueryStats[query_num];
-//   uint32_t             L = 75;
-//   std::vector<double>  latency_stats(query_num, 0);
-//   auto                 s = std::chrono::high_resolution_clock::now();
-//   omp_set_max_active_levels(4);
-// #pragma omp parallel for num_threads(6)
-//   for (_s64 i = 0; i < (int64_t) query_num; i++) {
-//     auto qs = std::chrono::high_resolution_clock::now();
-//     index->cached_beam_search(query + (i * query_aligned_dim), recall_at, L,
-//                                (query_result_tags.data() + (i * recall_at)),
-//                                query_result_dists.data() + (i * recall_at),
-//                                4,
-//                                stats + i);
-//     auto qe = std::chrono::high_resolution_clock::now();
-
-//     std::chrono::duration<double> diff = qe - qs;
-//     latency_stats[i] = diff.count() * 1000;
-//     //      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-//   }
-//   auto                          e = std::chrono::high_resolution_clock::now();
-//   std::chrono::duration<double> diff = e - s;
-//   float qps = (float) (((double) query_num) / diff.count());
-//   // compute mean recall, IOs
-//   float mean_recall = 0.0f;
-//   std::vector<uint32_t> query_result_tags2;
-//   for(auto tag : query_result_tags){
-//     query_result_tags2.emplace_back(tag);
-//   }
-//   tsl::robin_set<uint32_t> active_tags2;
-//   for(auto tag : active_tags){
-//     active_tags2.insert(tag);
-//   }
-//   mean_recall = diskann::calculate_recall(
-//       (unsigned) query_num, gt_ids2, gt_dists2, (unsigned) gt_dim2,
-//       query_result_tags2.data(), (unsigned) recall_at, (unsigned) recall_at,
-//       active_tags2);
-//   //    mean_recall /= (float) query_num;
-//   float mean_ios = (float) diskann::get_mean_stats(
-//       stats, query_num,
-//       [](const diskann::QueryStats &stats) { return stats.n_ios; });
-//   std::sort(latency_stats.begin(), latency_stats.end());
-//   std::string recall_string = "Recall@" + std::to_string(recall_at);
-//     std::cout << std::setw(4) << "Ls" << std::setw(12) << "QPS "
-//               << std::setw(18) << "Mean Latency (ms)" << std::setw(12)
-//               << "90 Latency" << std::setw(12) << "95 Latency" << std::setw(12)
-//               << "99 Latency" << std::setw(12) << "99.9 Latency"
-//               << std::setw(12) << recall_string << std::setw(12)
-//               << "Mean disk IOs" << std::endl;
-//     std::cout
-//         << "==============================================================="
-//            "==============="
-//         << std::endl;
-//     std::cout << std::setw(4) << L << std::setw(12) << qps << std::setw(18)
-//             << ((float) std::accumulate(latency_stats.begin(),
-//                                         latency_stats.end(), 0)) /
-//                     (float) query_num
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.95 * ((double) query_num))]
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.99 * ((double) query_num))]
-//             << std::setw(12)
-//             << (float) latency_stats[(_u64) (0.999 * ((double) query_num))]
-//             << std::setw(12) << mean_recall << std::setw(12) << mean_ios
-//             << std::endl;
-//   delete[] stats;
-//   diskann::aligned_free(query);
-//   // delete[] gt_ids;
-//   // delete[] gt_dists;
-//   // delete[] gt_tags;
-// }
 template<typename T, typename TagT>
 void DiskIndexMerger<T,TagT>::InitIndexWithCache(){
   std::string index_prefix_path = this->meta.index_prefix_path;
@@ -185,7 +64,7 @@ void DiskIndexMerger<T,TagT>::AddDeleteLocalID(tsl::robin_set<TagT>& deleted_tag
                 << " tags to delete from SSD-DiskANN\n";
 }
 template<typename T, typename TagT>
-tsl::robin_map<uint32_t, std::vector<uint32_t>> DiskIndexMerger<T,TagT>::PopulateNondeletedHoodsOfDeletedNodes(){
+tsl::robin_map<uint32_t, std::vector<uint32_t>> DiskIndexMerger<T,TagT>::PopulateNondeletedHoodsOfDeletedNodes(diskann::MergeStats* stats){
   // buf for scratch
   char *index_read_buf = nullptr;
   char *delete_backing_buf = nullptr;
@@ -220,6 +99,11 @@ tsl::robin_map<uint32_t, std::vector<uint32_t>> DiskIndexMerger<T,TagT>::Populat
   std::chrono::duration<double> diff = e - s;
   diskann::cout << "scan_deleted_nodes cost time: " << diff.count()*1000
                 << "ms.\n";
+  if(stats){
+    stats->delete_phase_random_read_4k += 1;
+    stats->delete_phase_seq_read_4k += (this->num_points()+ this->nnodes_per_sector()-1)/this->nnodes_per_sector();
+    stats->delete_phase_io_time += diff.count();
+  }
   // insert into deleted_nhoods
   deleted_nhoods.reserve(deleted_nodes.size());
   for (auto &nhood : deleted_nodes) {
@@ -250,21 +134,16 @@ tsl::robin_map<uint32_t, std::vector<uint32_t>> DiskIndexMerger<T,TagT>::Populat
 }
 template<typename T, typename TagT>
 void DiskIndexMerger<T,TagT>::ProcessDeletes(DiskIndexFileMeta& temp_index_file_meta, 
-                                            tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods,
-                                            std::vector<uint8_t *>& thread_bufs){
-  // buf to hold data being read
-  char *index_read_buf = nullptr;
-  uint64_t index_read_buf_size = SECTORS_PER_MERGE * SECTOR_LEN;
-  diskann::alloc_aligned((void **) &index_read_buf, index_read_buf_size, SECTOR_LEN);
-
+  tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods,
+  std::vector<uint8_t *>& thread_bufs,
+  diskann::MergeStats* stats){
   // open output file for writing
   
   diskann::cout << "Writing delete consolidated graph to "
                 << temp_index_file_meta.data_path << std::endl;
 
   DiskIndexDataIterator<T,TagT> index_data_iter  = this->GetIterator();
-  index_data_iter.Init(false /*read write*/, &temp_index_file_meta);
-
+  index_data_iter.Init(false /*read write*/,SECTORS_PER_MERGE, &temp_index_file_meta);
   diskann::Timer delete_timer;
   // batch consolidate deletes
   int free_cnt = 0;
@@ -282,7 +161,7 @@ void DiskIndexMerger<T,TagT>::ProcessDeletes(DiskIndexFileMeta& temp_index_file_
 
     for (auto &disk_node : *disk_nodes) {
       if (this->IsDeleted(disk_node)) {
-        this->free_local_ids.insert(disk_node.id);
+        this->free_local_ids.push(disk_node.id);
         free_cnt++;
       }
     }
@@ -292,7 +171,98 @@ void DiskIndexMerger<T,TagT>::ProcessDeletes(DiskIndexFileMeta& temp_index_file_
   }
   index_data_iter.TryFlushBack();
   double io_time = index_data_iter.GetIOTime();
+  if(stats){
+    stats->delete_phase_random_read_4k += index_data_iter.GetRandomRead();
+    stats->delete_phase_random_write_4k += index_data_iter.GetRandomWrite();
+    stats->delete_phase_seq_read_4k += index_data_iter.GetSeqRead();
+    stats->delete_phase_seq_write_4k += index_data_iter.GetSeqWrite();
+    stats->delete_phase_io_time += io_time;
+  }
   double e2e_time = ((double) delete_timer.elapsed()) / (1000000.0);
+  diskann::cout << "Processed Deletes in " << e2e_time << " s." << std::endl;
+  diskann::cout << "read/write io cost time in DeletePhase " << io_time << " s." << std::endl;
+  diskann::cout << "Examine: Found " 
+                << free_cnt
+                << " free nodes from SSD-DiskANN during delete phase\n";
+  /**
+   * write header
+  */
+  diskann::cout << "Writing header after delete phase.\n";
+  auto s = std::chrono::high_resolution_clock::now();
+  WriteDataFileHeaderAfterDeletePhase(temp_index_file_meta.data_path, disk_deleted_nhoods);
+  auto e = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = e - s;
+  if(stats){
+    stats->delete_phase_random_write_4k += 1;
+    stats->delete_phase_io_time += diff.count();
+  }
+}
+template<typename T, typename TagT>
+void DiskIndexMerger<T,TagT>::ProcessDeletes(DiskIndexFileMeta& temp_index_file_meta, std::vector<uint8_t *>& thread_bufs, diskann::MergeStats* stats){
+  // open output file for writing
+  
+  diskann::cout << "Writing delete consolidated graph to "
+                << temp_index_file_meta.data_path << std::endl;
+
+  DiskIndexDataIterator<T,TagT> index_data_iter  = this->GetIterator();
+  index_data_iter.Init(false /*read write*/, SECTORS_PER_MERGE, &temp_index_file_meta);
+  diskann::Timer delete_timer;
+  // batch consolidate deletes
+  int free_cnt = 0;
+  tsl::robin_map<uint32_t, std::vector<uint32_t>> deleted_nhoods;
+  std::shared_mutex mutex;
+  while(index_data_iter.HasNextBatch()){
+    std::vector<diskann::DiskNode<T>>* disk_nodes = nullptr;
+    std::tie(disk_nodes, std::ignore, std::ignore) = index_data_iter.NextBatch();
+    for (auto &nhood : *disk_nodes) {
+      // WARNING :: ASSUMING DISK GRAPH DEGREE NEVER GOES OVER 512
+      assert(nhood.nnbrs < 512);
+      if(!this->IsDeleted(nhood)){ // 如果没被删除则跳过
+        continue;
+      }
+      // 加入到空槽中
+      this->free_local_ids.push(nhood.id);
+      free_cnt++;
+      // 收集未被删除的邻居
+      std::vector<uint32_t> non_deleted_nbrs;
+      for (uint32_t i = 0; i < nhood.nnbrs; i++) {
+        uint32_t id = nhood.nbrs[i];
+        if (this->delete_local_id_set.find(id) != this->delete_local_id_set.end()) {
+          continue;
+        }
+        non_deleted_nbrs.push_back(id);
+      }
+      deleted_nhoods.insert(
+          std::make_pair(nhood.id, non_deleted_nbrs));
+    }
+    bool change = false;
+    #pragma omp parallel for schedule(dynamic, 128) num_threads(MAX_N_THREADS) reduction(|:change)
+    for(size_t i = 0; i < disk_nodes->size(); i++){
+      diskann::DiskNode<T>& disk_node = (*disk_nodes)[i];
+      int      omp_thread_no = omp_get_thread_num();
+      uint8_t *pq_coord_scratch = thread_bufs[omp_thread_no];
+      if(this->buf_pool){
+        this->buf_pool->RegisterReaderThread();
+      }
+      change = this->ConsolidateDeletes(disk_node, pq_coord_scratch, index_data_iter, deleted_nhoods, mutex, stats);
+    }
+    if(this->buf_pool && this->buf_pool->reader){
+      this->buf_pool->reader->deregister_all_threads();
+    }
+    if(change){
+      index_data_iter.NotifyNodeFlushBack();
+    }
+  }
+  index_data_iter.TryFlushBack();
+  double io_time = index_data_iter.GetIOTime();
+  double e2e_time = ((double) delete_timer.elapsed()) / (1000000.0);
+  if(stats){
+    stats->delete_phase_random_read_4k += index_data_iter.GetRandomRead();
+    stats->delete_phase_random_write_4k += index_data_iter.GetRandomWrite();
+    stats->delete_phase_seq_read_4k += index_data_iter.GetSeqRead();
+    stats->delete_phase_seq_write_4k += index_data_iter.GetSeqWrite();
+    stats->delete_phase_io_time += io_time;
+  }
   diskann::cout << "Processed Deletes in " << e2e_time << " s." << std::endl;
   diskann::cout << "read io cost time in DeletePhase " << io_time << " s." << std::endl;
   diskann::cout << "Examine: Found " 
@@ -301,9 +271,15 @@ void DiskIndexMerger<T,TagT>::ProcessDeletes(DiskIndexFileMeta& temp_index_file_
   /**
    * write header
   */
+  auto s = std::chrono::high_resolution_clock::now();
   diskann::cout << "Writing header after delete phase.\n";
-  WriteDataFileHeaderAfterDeletePhase(temp_index_file_meta.data_path, disk_deleted_nhoods);
-
+  WriteDataFileHeaderAfterDeletePhase(temp_index_file_meta.data_path, deleted_nhoods);
+  auto e = std::chrono::high_resolution_clock::now();
+  if(stats){
+    std::chrono::duration<double> diff = e - s;
+    stats->delete_phase_random_write_4k += 1;
+    stats->delete_phase_io_time += diff.count();
+  }
 }
 template<typename T, typename TagT>
 void DiskIndexMerger<T, TagT>::WriteDataFileHeaderAfterDeletePhase(std::string data_path,tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods){
@@ -525,12 +501,143 @@ bool DiskIndexMerger<T, TagT>::ConsolidateDeletes(diskann::DiskNode<T> &disk_nod
   return true;
 }
 template<typename T, typename TagT>
+bool DiskIndexMerger<T, TagT>::ConsolidateDeletes(diskann::DiskNode<T> &disk_node, uint8_t * scratch, DiskIndexDataIterator<T,TagT>& data_iter, tsl::robin_map<uint32_t, std::vector<uint32_t>>& deleted_nhoods,
+std::shared_mutex& mutex, diskann::MergeStats* stats){
+
+  // 检查节点是否已经删除了，如果已经删除了，则将邻居数设为0
+  if (this->IsDeleted(disk_node)) {
+    disk_node.nnbrs = 0;
+    *(disk_node.nbrs - 1) = 0;
+
+    return true;
+  }
+
+  const uint32_t id = disk_node.id;
+
+  assert(disk_node.nnbrs < 512); // 这个在之前其实也检查过
+
+  // 将该节点的邻居（从 disk_node.nbrs 开始的内存区域）存入 id_nhood 向量
+  std::vector<uint32_t> id_nhood(disk_node.nbrs,
+                                  disk_node.nbrs + disk_node.nnbrs);
+
+  tsl::robin_set<uint32_t> new_edges;
+
+  bool change = false;
+  for (auto &nbr : id_nhood) {
+    auto iter = this->delete_local_id_set.find(nbr);
+    if(iter == this->delete_local_id_set.end()){
+      new_edges.insert(nbr);
+      continue;
+    }
+    // 如果邻居被删除了
+    change = true;
+    {
+      std::shared_lock<std::shared_mutex> lock(mutex);
+      auto cached_nhood = deleted_nhoods.find(nbr);
+      if (cached_nhood != deleted_nhoods.end()) { // 如果之前缓存过
+        new_edges.insert(cached_nhood->second.begin(), cached_nhood->second.end());
+        continue;
+      }
+    }
+    // 如果没缓存过
+    diskann::DiskNode<T> nbr_node;
+    assert(this->buf_pool);
+    // char * sector_scratch = nullptr;
+    // diskann::alloc_aligned((void**)&sector_scratch,  SECTOR_LEN, SECTOR_LEN);
+    // 读取点
+    // nbr_node = this->buf_pool->get_node<T>(nbr, sector_scratch);
+    nbr_node = this->buf_pool->get_node<T>(nbr);
+    if(stats){
+      stats->delete_phase_random_read_4k += 1;
+    }
+    // 将该点缓存下来
+    std::vector<uint32_t> non_deleted_nbrs;
+    for (uint32_t i = 0; i < nbr_node.nnbrs; i++) {
+      uint32_t id = nbr_node.nbrs[i];
+      auto     iter = this->delete_local_id_set.find(id);
+      if (iter == this->delete_local_id_set.end()) {
+        non_deleted_nbrs.push_back(id);
+      }
+    }
+    {
+      std::unique_lock<std::shared_mutex> lock(mutex);
+      deleted_nhoods.insert(
+        std::make_pair(nbr_node.id, non_deleted_nbrs));
+    }
+    // 加入
+    new_edges.insert(nbr_node.nbrs, nbr_node.nbrs + nbr_node.nnbrs);
+    // 用完在缓冲池中unpin
+    this->buf_pool->unpin(nbr_node.id);
+    // diskann::aligned_free(sector_scratch);
+  }
+  // no refs to deleted nodes --> move to next node
+  if (!change) {
+    return false;
+  }
+
+  // refs to deleted nodes
+  id_nhood.clear();
+  id_nhood.reserve(new_edges.size());
+  for (auto &nbr : new_edges) { // TODO: 是否多余?
+    // 2nd order deleted edge
+    auto iter = this->delete_local_id_set.find(nbr);
+    if (iter != this->delete_local_id_set.end()) {
+      continue;
+    } else {
+      id_nhood.push_back(nbr);
+    }
+  }
+
+  // TODO (corner case) :: id_nhood might be empty in adversarial cases
+  if (id_nhood.empty()) {
+    diskann::cout << "Adversarial case -- all neighbors of node's neighbors "
+                      "deleted -- ID : "
+                  << id << "; exiting\n";
+    exit(-1);
+  }
+
+  // compute PQ dists and shrink
+  std::vector<float> id_nhood_dists(id_nhood.size(), 0.0f);
+  assert(scratch != nullptr);
+  this->index->compute_pq_dists(id, id_nhood.data(),
+                                      id_nhood_dists.data(),
+                                      (_u32) id_nhood.size(), scratch);
+
+  // prune neighbor list using PQ distances
+  std::vector<diskann::Neighbor> cand_nbrs(id_nhood.size());
+  for (uint32_t i = 0; i < id_nhood.size(); i++) {
+    cand_nbrs[i].id = id_nhood[i];
+    cand_nbrs[i].distance = id_nhood_dists[i];
+  }
+  // sort and keep only maxc neighbors
+  std::sort(cand_nbrs.begin(), cand_nbrs.end());
+  if (cand_nbrs.size() > this->maxc()) {
+    cand_nbrs.resize(this->maxc());
+  }
+  std::vector<diskann::Neighbor> pruned_nbrs;
+  std::vector<float>    occlude_factor(cand_nbrs.size(), 0.0f);
+  pruned_nbrs.reserve(this->range());
+  this->OccludeListWithPQDistance(cand_nbrs, pruned_nbrs, occlude_factor, scratch);
+
+  // copy back final nbrs
+  disk_node.nnbrs = (_u32) pruned_nbrs.size();
+  *(disk_node.nbrs - 1) = disk_node.nnbrs;
+  for (uint32_t i = 0; i < (_u32) pruned_nbrs.size(); i++) {
+    disk_node.nbrs[i] = pruned_nbrs[i].id;
+  }
+  return true;
+}
+template<typename T, typename TagT>
 void DiskIndexMerger<T, TagT>::ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list, DiskIndexDataIterator<T, TagT>& index_data_iter, tsl::robin_set<TagT>* delete_tag_set, int frozen_location){
 
     std::vector<diskann::ThreadData<T>>& disk_thread_data = this->thread_data();
     int target = insert_nodes.size();
     int progress = 0, insert_num = 0;
     diskann::cout<< "start insert, insert size: " << insert_nodes.size() << " nodes" << std::endl;
+    std::vector<std::vector<uint32_t>> new_nhood_list;
+    std::vector<std::vector<uint8_t>> new_pq_coords_list;
+    new_nhood_list.resize(target);
+    new_pq_coords_list.resize(target);
     // print_tags_from_array<TagT>(insert_nodes_tag_list, insert_nodes.size());
     #pragma omp parallel for schedule(dynamic, 128) num_threads(MAX_N_THREADS)
     for(size_t i = 0; i < insert_nodes.size(); i++){
@@ -556,72 +663,17 @@ void DiskIndexMerger<T, TagT>::ProcessInserts(std::vector<diskann::DiskNode<T>>&
                                         coord_map, &thread_data);
       
       // prune neighbors using alpha
-      std::vector<uint32_t> new_nhood;
+      std::vector<uint32_t>& new_nhood = new_nhood_list[i];
       this->PruneNeighbors(coord_map, pool, new_nhood);
-      if (new_nhood.size() > this->range()) {
+      if (new_nhood.size() > this->range() || new_nhood.size() == 0) {
         std::cout << "***ERROR*** After prune, for offset_id: " << offset_id << " found "
                   << new_nhood.size() << " neighbors instead of range: " << this->range()
                   << std::endl;
       
       }
-      // insert_time = (float) timer.elapsed();
-      // timer.reset();
-      diskann::DiskNode<T>* to_node = nullptr;
-      uint8_t* to_node_pq_coord = nullptr;
-      TagT* to_node_tag = nullptr;
-
-      // find location to insert vector and its new nhoods(must be exclusive)
-      #pragma omp critical
-      while(index_data_iter.HasNext()){
-        std::tie(to_node, to_node_pq_coord, to_node_tag) = index_data_iter.Next();
-        if(!this->IsFree(to_node->id)){ // If not free, skip
-          continue;
-        }
-        this->BookId(to_node->id);
-        break;
-      }
-      // find_time = (float) timer.elapsed();
-      // timer.reset();
-      if(to_node && to_node_pq_coord && to_node_tag){ // If find the location
-        // copy vector
-        memcpy(to_node->coords, from_node.coords, this->ndim() * sizeof(T));
-        // number of nhoods
-        to_node->nnbrs =  new_nhood.size();
-        *(to_node->nbrs - 1) = to_node->nnbrs;
-        // copy new nhoods
-        std::copy(new_nhood.begin(), new_nhood.end(), to_node->nbrs);
-        // add backward edge to disk index delta
-        this->delta->inter_insert(to_node->id, new_nhood.data(),
-                                    (_u32) new_nhood.size());
-        /* 
-         * insert pq data
-         */
-        // compute PQ coords
-        std::vector<uint8_t> new_pq_coords = this->DeflateVector(to_node->coords);
-
-        // directly copy into PQFlashIndex PQ data
-        memcpy(to_node_pq_coord, new_pq_coords.data(),
-                this->pq_nchunks() * sizeof(uint8_t));
-        /**
-         * insert tag data
-        */
-      //  if(this->TagExist(from_node_tag)){
-      //     diskann::cout << "Examine: Insert tag already exist in ssd-disk index, Tag: " << from_node_tag << "\n";
-      //  }
-        *to_node_tag = from_node_tag;
-
-        #pragma omp atomic
-        insert_num++;
-
-        // notify the disk index to flush back the insertion
-        index_data_iter.NotifyFlushBack();
-      }
-      // copy_time = (float) timer.elapsed();
-      // diskann::cout << "insert time: " << ((double) insert_time / (double) 1000000) << "s; "<< "find time: " << ((double) find_time / (double) 1000000) << "s; "<< "copy time: " << ((double) copy_time / (double) 1000000) << "s; " << std::endl;
-    // timer.reset();
-      // uint32_t thread_no = omp_get_thread_num();
-      // this->insert_times[thread_no] += insert_time;
-      // this->delta_times[thread_no] += delta_time;
+      
+      // compute PQ coords
+      new_pq_coords_list[i] = this->DeflateVector(from_node.coords);
 
       // 使用 atomic 增加进度
       #pragma omp atomic
@@ -632,12 +684,60 @@ void DiskIndexMerger<T, TagT>::ProcessInserts(std::vector<diskann::DiskNode<T>>&
           std::cout << "Progress: " << progress << "(actual insert: " << insert_num << ")" << "/" << target << std::endl;
       }
     }
+    
+    for(size_t i = 0; i < insert_nodes.size(); i++){
+      diskann::DiskNode<T>& from_node = insert_nodes[i];
+      const uint32_t offset_id = from_node.id;
+      TagT from_node_tag = insert_nodes_tag_list[i];
+      if(frozen_location != -1 && offset_id == frozen_location){
+        diskann::cout<<"ProcessInserts: found frozen point: "<< frozen_location<<" With tag: "<<from_node_tag<<std::endl;
+        continue;
+      }
+      if(delete_tag_set && delete_tag_set->count(from_node_tag)){
+        continue;
+      }
+      diskann::DiskNode<T>* to_node = nullptr;
+      uint8_t* to_node_pq_coord = nullptr;
+      TagT* to_node_tag = nullptr;
+      std::vector<uint32_t>& new_nhood = new_nhood_list[i];
+      std::vector<uint8_t> new_pq_coords = new_pq_coords_list[i];
+      // find location to insert vector and its new nhoods(must be exclusive)
+      if(!this->free_local_ids.empty()){
+        unsigned free_id = this->free_local_ids.top();
+        this->free_local_ids.pop();
+        std::tie(to_node, to_node_pq_coord, to_node_tag) = index_data_iter.SeekNode(free_id);
+      }
+      if(to_node && to_node_pq_coord && to_node_tag){ // If find the location
+        // copy vector
+        memcpy(to_node->coords, from_node.coords, this->ndim() * sizeof(T));
+        // number of nhoods
+        to_node->nnbrs =  new_nhood.size();
+        *(to_node->nbrs - 1) = to_node->nnbrs;
+        // copy new nhoods
+        std::copy(new_nhood.begin(), new_nhood.end(), to_node->nbrs);
+        // add backward edge to disk index delta
+        this->delta->inter_insert(to_node->id, new_nhood.data(),
+                                  (_u32) new_nhood.size());
+        /* 
+         * insert pq data
+         */
+        // directly copy into PQFlashIndex PQ data
+        memcpy(to_node_pq_coord, new_pq_coords.data(),
+                this->pq_nchunks() * sizeof(uint8_t));
+        /**
+         * insert tag data
+        */
+        *to_node_tag = from_node_tag;
+        // notify the disk index to flush back the insertion
+        index_data_iter.NotifyFlushBack();
+      }
+    }
 }
 template<typename T, typename TagT>
-void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_meta, std::vector<uint8_t *>& thread_bufs){
+void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_meta, std::vector<uint8_t *>& thread_bufs,diskann::MergeStats* stats){
 
   DiskIndexDataIterator<T, TagT> index_data_iter = this->GetIterator();
-  index_data_iter.Init(false/* read_write*/, &final_index_file_meta);
+  index_data_iter.Init(false/* read_write*/, SECTORS_PER_MERGE);
   while(index_data_iter.HasNextBatch()){
     std::vector<diskann::DiskNode<T>>* disk_nodes = nullptr;
     std::tie(disk_nodes, std::ignore, std::ignore) = index_data_iter.NextBatch();
@@ -651,8 +751,6 @@ void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_
       int      omp_thread_no = omp_get_thread_num();
       uint8_t *thread_scratch = thread_bufs[omp_thread_no];
 
-      #pragma omp atomic
-      progress++;
       
       // get backward edge set
       std::vector<uint32_t> delta_edges = this->delta->get_nhood(disk_node.id);
@@ -660,8 +758,6 @@ void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_
         continue;
       }
 
-      #pragma omp atomic
-      patch_num++;
 
       // add backward edge to old nhood
       std::vector<uint32_t> nhood;
@@ -689,21 +785,29 @@ void DiskIndexMerger<T, TagT>::ProcessPatch(DiskIndexFileMeta& final_index_file_
               disk_node.nnbrs * sizeof(uint32_t));
       // notify the disk index to flush back the insertion
       index_data_iter.NotifyNodeFlushBack();
-
-      // 每完成一定进度输出一次
-      // #pragma omp critical
-      // if (progress % 10000 == 0) {
-      //     std::cout << "Progress: " << progress << "(actual patch: " << patch_num << ")" << "/" << target << std::endl;
-      // }
     }
   }
   index_data_iter.TryFlushBack();
   double io_time = index_data_iter.GetIOTime(); 
+  if(stats){
+    stats->patch_phase_random_read_4k += index_data_iter.GetRandomRead();
+    stats->patch_phase_random_write_4k += index_data_iter.GetRandomWrite();
+    stats->patch_phase_seq_read_4k += index_data_iter.GetSeqRead();
+    stats->patch_phase_seq_write_4k += index_data_iter.GetSeqWrite();
+    stats->patch_phase_io_time += io_time;
+  }
   diskann::cout << "read io cost time in PatchPhase: " <<  io_time << " s" << std::endl;
   /**
    * Write Header
   */
+  auto s = std::chrono::high_resolution_clock::now();
   this->WriteDataFileHeaderAfterPatchPhase(final_index_file_meta.data_path);
+  auto e = std::chrono::high_resolution_clock::now();
+  if(stats){
+    std::chrono::duration<double> diff = e - s;
+    stats->patch_phase_random_write_4k += 1;
+    stats->patch_phase_io_time += diff.count();
+  }
 }
 template<typename T, typename TagT>
 bool DiskIndexMerger<T, TagT>::IsDeleted(diskann::DiskNode<T> &disk_node){
@@ -723,48 +827,6 @@ bool DiskIndexMerger<T, TagT>::IsDeleted(diskann::DiskNode<T> &disk_node){
   }
   return (this->delete_local_id_set.find(disk_node.id) !=
           this->delete_local_id_set.end());
-}
-template<typename T, typename TagT>
-bool DiskIndexMerger<T, TagT>::IsFree(uint32_t local_id){
-  return this->free_local_ids.count(local_id)!=0;
-
-}
-template<typename T, typename TagT>
-void DiskIndexMerger<T, TagT>::BookId(uint32_t local_id){
-  this->free_local_ids.erase(local_id);
-}
-template<typename T, typename TagT>
-bool DiskIndexMerger<T, TagT>::TagExist(TagT tag){
-  TagT* tag_list = this->tags();
-  uint32_t npts =  this->num_points();
-  for(uint32_t i = 0; i < npts ; i++){
-    if(IsFree(i)){
-      continue;
-    }
-    if(tag_list[i] == tag){
-      return true;
-    }
-  }
-  return false;
-}
-template<typename T, typename TagT>
-void DiskIndexMerger<T, TagT>::TagInfo(){
-  TagT* tag_list = this->tags();
-  uint32_t npts =  this->num_points();
-  int real_cnt = 0;
-  std::set<TagT> set;
-  for(uint32_t i = 0; i < npts ; i++){
-    if(IsFree(i)){
-      continue;
-    }
-    real_cnt++;
-    set.insert(tag_list[i]);
-  }
-  diskann::cout<< "unique tag num / total tag num / npts: " 
-               << set.size() << "/"
-               << real_cnt << "/"
-               << npts << "/"
-               << std::endl;
 }
 template<typename T, typename TagT>
 void DiskIndexMerger<T, TagT>::ReportGraphDelta(){

@@ -4,6 +4,10 @@
 #include "pq_flash_index.h"
 #include "timer.h"
 #include "utils.h"
+#include "gp/graph_partitioner.h"
+#include "gp/greedy_allocation_relayout.h"
+#include "gp/neighbor_frequency_relayout.h"
+#include "gp/in_degree_rank_relayout.h"
 #include <omp.h>
 namespace lsmidx
 {
@@ -100,9 +104,6 @@ void LSMVectorIndex<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active_tags){
 }
 template<typename T, typename TagT>
 LSMVectorIndex<T, TagT>::~LSMVectorIndex() {
-    // for(auto iter : this->deleted_tags_vector){
-    //     delete iter;
-    // }
 }
 
 template<typename T, typename TagT>
@@ -140,26 +141,10 @@ LSMVectorIndex<T, TagT>::LSMVectorIndex(const BuildOptions& options, const std::
         int thresh = arr[cur_level-1];
         disk_indexes.emplace_back(std::make_shared<PQFlashIndexProxy<T, TagT>>(this->dist_metric, working_dir+'/'+index_name, 0,  this->readers[cur_level], this->dimension, thresh, paras_disk, cur_level, this->is_single_file_index,this->num_search_threads));
     }
-    // 初始化一些状态量
-    // this->disk_index_locks.reserve(this->disk_indexes.size());
-    // for(size_t i = 0; i < this->disk_indexes.size(); i++){
-    //     this->disk_index_locks.emplace_back( std::make_unique<std::shared_mutex>());
-    // }
 }
 template<typename T, typename TagT>
 int LSMVectorIndex<T, TagT>::Put(const WriteOptions& options, const VecSlice<T>& key, const TagSlice<TagT>& value, diskann::InsertStats * stats){
     const TagT tag = value.tag();
-    // auto s = std::chrono::high_resolution_clock::now();
-    // auto lock = this->GetMemLevelReadLock();
-    // auto e = std::chrono::high_resolution_clock::now();
-    // std::chrono::duration<double> diff = e - s;
-    // stats->get_mem_level_read_lock_time += diff.count();
-
-    // int ret = mem_index->Put(options, key, tag);
-    // if(ret == -2){ // 说明当前已经满了，需要进行切换
-    //     return -2;
-    //     // mem_index->Switch();
-    // }
 
     return mem_index->Put(options, key, tag, stats);
 }
@@ -167,7 +152,6 @@ int LSMVectorIndex<T, TagT>::Put(const WriteOptions& options, const VecSlice<T>&
 template<typename T, typename TagT>
 void LSMVectorIndex<T, TagT>::Delete(const WriteOptions&, const TagSlice<TagT>& value){
     const TagT tag = value.tag();
-    // auto lock = this->GetMemLevelWriteLock();
     this->mem_index->LazyDelete(tag);
 }
 template<typename T, typename TagT>
@@ -210,31 +194,39 @@ void LSMVectorIndex<T, TagT>::Search(const SearchOptions& options, const VecSlic
     for (size_t level = 0; level < size; level++){
         disk_locks.emplace_back(this->GetDiskLevelReadLock(level));
     }
-
+    /**
+     * 准备好每层组件搜索需要排除的点
+     */
+    std::vector<std::vector<lsmidx::TagDeleter<TagT>*>> disk_exclude_set_lists(size);
+    std::vector<lsmidx::TagDeleter<TagT>*> mem_exclude_set_list(size);
+    std::vector<lsmidx::TagDeleter<TagT>*> cur_exclude_set_list;
+    for (int level = -1; level < size; level++){
+        if(level == -1){ // mem index
+            mem_exclude_set_list = cur_exclude_set_list;
+            cur_exclude_set_list.push_back(&this->mem_index->delete_tag_set);
+        }else{ // disk index
+            disk_exclude_set_lists[level] = cur_exclude_set_list;
+            cur_exclude_set_list.push_back(&this->disk_indexes[level]->delete_tag_set);
+        }
+    }
     const T* query = key.data();
     const uint64_t K = options.K;
-
-    //search each index and get top K tags
-    #pragma omp parallel for schedule(dynamic, 1) num_threads(size + 1)
-    for (int level = -1; level < (int)size; level++){
-        if(level == -1){ // mem index
-            this->mem_index->KNNQuery(query, mem_res, options, stats);
-        }else{ // disk index
-            this->disk_indexes[level]->KNNQuery(query, disk_res[level], options, stats);
-        }
+    
+    // search mem index
+    this->mem_index->KNNQuery(query, mem_res, options, mem_exclude_set_list, stats);
+    
+    // search each disk index and get top K tags
+    #pragma omp parallel for schedule(dynamic, 1) num_threads(size)
+    for (int level = 0; level < (int)size; level++){
+        this->disk_indexes[level]->KNNQuery(query, disk_res[level], options, disk_exclude_set_lists[level], stats);
     }
-    // filter delete tag point
-    std::vector<diskann::Neighbor_Tag<TagT>> filter_res;
     for (int level = (int)size-1; level >= -1; level--){
         if(level == -1){ // mem index
-            this->mem_index->FilterDeletedTags(filter_res);
-            filter_res.insert(filter_res.end(), mem_res.begin(), mem_res.end());
+            best.insert(mem_res.begin(), mem_res.end());
         }else{ // disk index
-            this->disk_indexes[level]->FilterDeletedTags(filter_res);
-            filter_res.insert(filter_res.end(), disk_res[level].begin(), disk_res[level].end());
+            best.insert(disk_res[level].begin(), disk_res[level].end());
         }
     }
-    best.insert(filter_res.begin(), filter_res.end());
     // 不需要额外的排序，因为set内部本身有序
     size_t pos = 0;
     for(auto iter : best){
@@ -246,7 +238,7 @@ void LSMVectorIndex<T, TagT>::Search(const SearchOptions& options, const VecSlic
     }
 }
 template<typename T, typename TagT>
-std::unique_ptr<MemFlusher<T, TagT>> LSMVectorIndex<T, TagT>::ConstructMemFlusher(){ // TODO
+std::unique_ptr<MemFlusher<T, TagT>> LSMVectorIndex<T, TagT>::ConstructMemFlusher(){
 
     return std::make_unique<MemFlusher<T, TagT>>((uint32_t) this->dimension, this->dist_comp, this->dist_metric, this->is_single_file_index);
 }
@@ -295,7 +287,6 @@ void removeOldMemIndex(std::string old_mem_index_prefix){
 void OverwriteOldFile(std::string& old_file, std::string& new_file){
     // Check if the new file exists
     if (!file_exists(new_file)) {
-        // diskann::cout << "Error: New disk index file does not exist." << std::endl;
         return;
     }
 
@@ -338,12 +329,9 @@ void LSMVectorIndex<T, TagT>::TriggerMergeMemIndex(){
         diskann::cout << "can't switch mem_index"<<std::endl;
         return;
     }
-    // 将切换前的Index落盘
-    // std::string save_path = this->mem_index->SaveIndex(prev_idx);
     //start timer
     diskann::Timer timer;
     // 再开始merge
-    // MergeMemIndex(save_path);
     std::shared_ptr<lsmidx::InMemIndexProxy<T, TagT>> from_mem_index = this->mem_index->GetIndexProxy(mem_idx);
     while((disk_idx = MergeMemIndex(from_mem_index, level0_index_ptr)) == -1){
         level0_index_read_lock.unlock();
@@ -358,11 +346,6 @@ void LSMVectorIndex<T, TagT>::TriggerMergeMemIndex(){
     /**
      *  Flush完以后，进行索引状态的切换 
      */
-    // 获取mem和level0层的写锁
-    // diskann::cout << "Acquiring Mem level write lock in merge_mem" << std::endl;
-    // auto mem_index_write_lock = this->GetMemLevelWriteLock();
-    // diskann::cout << "Acquiring level0 write lock in merge_mem" << std::endl;
-    // auto level0_index_write_lock = this->GetDiskLevelWriteLock(0);
 
     // disk index重新加载数据
     std::string out_disk_index_prefix = level0_index_ptr->GetIndexProxy(disk_idx)->GetIndexPrefix();
@@ -414,7 +397,7 @@ int ExtractNumber(const std::string& str) {
     return -1; // 如果没有找到下划线，返回错误值
 }
 template<typename T, typename TagT>
-void LSMVectorIndex<T, TagT>::TriggerMergeDiskIndex(int level){ // level must be equal to 0
+void LSMVectorIndex<T, TagT>::TriggerMergeDiskIndex(int level, diskann::MergeStats* stats){ // level must be equal to 0
     if(level < 0){
         diskann::cout  << "merge level must >= 0" << std::endl;
         return;
@@ -426,18 +409,12 @@ void LSMVectorIndex<T, TagT>::TriggerMergeDiskIndex(int level){ // level must be
     if(from_indexes.size()<lsmidx::config::level0_merge_index_num_thresh){
         return;
     }
-    // std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> from_indexes_raw = from_index->GetNonFreeIndexList();
-    // if(from_indexes_raw.size()<=0){
-    //     return;
-    // }
-    // std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> from_indexes;
-    // from_indexes.emplace_back(from_indexes_raw[0]);
     // 获取level+1层的读锁
     std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> to_index = std::dynamic_pointer_cast<lsmidx::PQFlashIndexProxy<T, TagT>>(this->disk_indexes[level + 1]);
     auto to_level_read_lock = to_index->GetReadLock();
     //start timer
     diskann::Timer timer;
-    MergeDiskIndex(from_indexes, to_index);
+    MergeDiskIndex(from_indexes, to_index, stats);
     diskann::cout << "Merge level " << level << "to level" << level + 1 << " time : " << timer.elapsed()/1000 << " ms" << std::endl;
     to_level_read_lock.unlock();
 
@@ -467,7 +444,7 @@ void LSMVectorIndex<T, TagT>::TriggerMergeDiskIndex(int level){ // level must be
 }
 
 template<typename T, typename TagT>
-void LSMVectorIndex<T, TagT>::MergeDiskIndex(std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>>& from_indexes, std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> to_index){
+void LSMVectorIndex<T, TagT>::MergeDiskIndex(std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>>& from_indexes, std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> to_index, diskann::MergeStats* stats){
     // 获取合并涉及文件索引前缀名
     std::string to_disk_index_prefix = to_index->GetIndexPrefix();
     std::string out_disk_index_prefix = to_disk_index_prefix +"_merge";
@@ -477,7 +454,6 @@ void LSMVectorIndex<T, TagT>::MergeDiskIndex(std::vector<std::shared_ptr<lsmidx:
     // 构建一个levelMerger并进行Merge
     
     // 如果是Level0，就把Level0现有的所有index往下merge(后续可以考虑只merge一部分)
-    // int thresh = lsmidx::config::level0_merge_index_num_thresh;
     
     // acquire locks
     std::vector<std::shared_lock<std::shared_mutex>> lock_vec;
@@ -485,16 +461,10 @@ void LSMVectorIndex<T, TagT>::MergeDiskIndex(std::vector<std::shared_ptr<lsmidx:
         lock_vec.emplace_back(from_indexes[i]->GetReadLock());
     }
     std::unique_ptr<Level0Merger<T, TagT>> merger = this->ConstructLevel0Merger(from_indexes, to_index);
-    merger->merge(out_disk_index_prefix, tmp_folder);
+    merger->merge(out_disk_index_prefix, tmp_folder, stats);
     diskann::cout << "Merge done" << std::endl;
     
     // 进行合并后的磁盘索引的替换
-    
-    // 先获取level和level+1层的写锁
-    // diskann::cout << "Acquiring level0 write lock in merge disk" << std::endl;
-    // auto from_level_write_lock = from_index->GetWriteLock();
-    // diskann::cout << "Acquiring level1 write lock in merge disk" << std::endl;
-    // auto to_level_write_lock = to_index->GetWriteLock();
     
     // 删除to原本的索引文件，并将新索引重命名
     OverwriteOldIndex(to_disk_index_prefix, out_disk_index_prefix);
@@ -532,6 +502,42 @@ std::shared_lock<std::shared_mutex> LSMVectorIndex<T, TagT>::GetDiskLevelReadLoc
 template<typename T, typename TagT>
 std::unique_lock<std::shared_mutex> LSMVectorIndex<T, TagT>::GetDiskLevelWriteLock(int level){
     return disk_indexes[level]->GetWriteLock();
+}
+template<typename T, typename TagT>
+void LSMVectorIndex<T, TagT>::RedistributeDiskIndex(){
+    
+    auto main_disk_index = this->disk_indexes[1];
+    std::string main_disk_index_prefix = main_disk_index->GetIndexPrefix();
+    lsmidx::PartitionOption opt;
+    // 执行IDRR算法
+    std::shared_ptr<lsmidx::InDegreeRankRelayout> idrr = std::make_shared<lsmidx::InDegreeRankRelayout>(main_disk_index_prefix+"_disk.index");
+    idrr->gm->graph_degree_statistic();
+    idrr->partition_statistic("raw", 0, 0);
+    idrr->GraphPartition(opt);
+    
+    // 执行GAR算法
+    std::shared_ptr<lsmidx::GreedyAllocationRelayout> gar = std::make_shared<lsmidx::GreedyAllocationRelayout>(idrr);
+    gar->GraphPartition(opt);
+
+    // 执行NFR算法
+    lsmidx::NeighborFrequencyRelayout nfr(gar);
+    opt.nfr_rounds = 10;
+    nfr.GraphPartition(opt);
+    std::string out_disk_index_prefix = main_disk_index_prefix +"_redistribute";
+
+    // 执行重布局
+    nfr.RedistributeIndex<T, TagT>(main_disk_index_prefix, out_disk_index_prefix);
+    
+    // 重新加载数据
+    diskann::cout << "#ReloadIndex in redistribute index" << std::endl;
+    OverwriteOldIndex(main_disk_index_prefix, out_disk_index_prefix);
+    auto main_level_write_lock = main_disk_index->GetWriteLock();
+    std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> to_index = std::dynamic_pointer_cast<lsmidx::PQFlashIndexProxy<T, TagT>>(main_disk_index);
+    to_index->ReloadIndex(main_disk_index_prefix);
+}
+template<typename T, typename TagT>
+void LSMVectorIndex<T, TagT>::RecalculateInsertMemIndexEntryPoint(){
+    this->mem_index->RecalculateInsertMemIndexEntryPoint();
 }
 // template class instantiations
   template class LSMVectorIndex<float, uint32_t>;

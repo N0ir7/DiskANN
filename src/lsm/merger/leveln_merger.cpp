@@ -144,7 +144,6 @@ auto report_time = [](diskann::Timer &timer, const std::string &msg) {
  */
 DeletePhase();
 report_time(timer, "Delete Phase");
-this->to_disk_index_merger_->TagInfo();
 /**
  * 2. Insert Prepare Phase
  */
@@ -165,7 +164,6 @@ std::cout << "AFTER RELOAD: PQ_NChunks: " << this->to_disk_index_merger_->pq_nch
           << " Frozen point id: " << this->to_disk_index_merger_->init_ids()[0] << std::endl;
 
 report_time(timer, "Insert Prepare Phase");
-this->to_disk_index_merger_->TagInfo();
 /**
  * 3. insert phase
  */
@@ -173,7 +171,6 @@ InsertPhase();
 // 后续不再使用from_disk_index_merger_了，提前释放资源
 this->from_disk_index_merger_.reset();
 report_time(timer, "Insert Phase");
-this->to_disk_index_merger_->TagInfo();
 // END -- PQ data on disk consistent and in correct order
 /**
  * 
@@ -182,7 +179,6 @@ this->to_disk_index_merger_->TagInfo();
 
 PatchPhase();
 report_time(timer, "Patch Phase");
-this->to_disk_index_merger_->TagInfo();
 }
 template<typename T, typename TagT>
 uint32_t LevelNMerger<T, TagT>::ComputeNewMaxPts(){
@@ -195,11 +191,8 @@ uint32_t LevelNMerger<T, TagT>::ComputeNewMaxPts(){
                 << ", free: " << this->to_disk_index_merger_->free_local_ids.size() << "\n";
   // 再看现有的disk index的空闲位置数量是否充足，不充足则扩容
   uint32_t last_id = this->to_disk_index_merger_->num_points();
-  if (needed > this->to_disk_index_merger_->free_local_ids.size()) {
-    this->to_disk_index_merger_->free_local_ids.reserve(needed);
-  }
   while (this->to_disk_index_merger_->free_local_ids.size() < needed) {
-    this->to_disk_index_merger_->free_local_ids.insert(last_id);
+    this->to_disk_index_merger_->free_local_ids.push(last_id);
     last_id++;
   }
   return last_id;
@@ -233,10 +226,10 @@ void LevelNMerger<T, TagT>::DeletePhase(){
 template<typename T, typename TagT>
 void LevelNMerger<T, TagT>::InsertPhase(){
   DiskIndexDataIterator<T, TagT> from_disk_index_data_iter = std::move(this->from_disk_index_merger_->GetIterator());
-  from_disk_index_data_iter.Init(true/* read_only*/);
+  from_disk_index_data_iter.Init(true/* read_only*/, SECTORS_PER_MERGE);
 
   DiskIndexDataIterator<T, TagT> to_disk_index_data_iter = std::move(this->to_disk_index_merger_->GetIterator());
-  to_disk_index_data_iter.Init(false/* read_write*/);
+  to_disk_index_data_iter.Init(false/* read_write*/, 1);
   int batch_cnt = 0, num_cnt = 0;
   diskann::Timer timer;
   while (from_disk_index_data_iter.HasNextBatch()){

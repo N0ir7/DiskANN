@@ -1,5 +1,6 @@
 #include "lsm/level/level_index.h"
 #include "timer.h"
+#include <cfloat>  // 包含该头文件以使用 FLT_MAX
 namespace lsmidx{
   template<typename T, typename TagT>
 void PQFlashIndexProxy<T, TagT>::GetActiveTags(tsl::robin_set<TagT>& active_tags){
@@ -36,7 +37,7 @@ void PQFlashIndexProxy<T, TagT>::ReportQueryInfo(int query_num){
   }
 }
 template<typename T, typename TagT>
-void PQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats){
+void PQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats){
   // auto lock = this->GetReadLock();
   if(this->index->return_nd() == 0){
     return;
@@ -50,13 +51,33 @@ void PQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::N
   std::vector<TagT> disk_result_tags(k);
   diskann::QueryStats tmp;
   // this->index->cached_beam_search(query, k, search_L, disk_result_tags.data(), disk_result_dists.data(), beamwidth, stats);
-  this->index->cached_beam_search(query, k, search_L, disk_result_tags.data(), disk_result_dists.data(), beamwidth, &tmp);
+  this->index->cached_beam_search_excludes(query, k, search_L, disk_result_tags.data(), disk_result_dists.data(), beamwidth, exclude_set_list, &tmp);
   stats->Aggregate(tmp);
   stat.Aggregate(tmp);
   for(unsigned i = 0; i < disk_result_tags.size(); i++){
     res.emplace_back(disk_result_tags[i], disk_result_dists[i]);
   }
 }
+template<typename T, typename TagT>
+void PQFlashIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats, diskann::ThreadData<T>* thread_data){
+  if(this->index->return_nd() == 0){
+    return;
+  }
+  diskann::Timer timer;
+  uint64_t search_L = options.search_L;
+  uint64_t beamwidth = options.beamwidth;
+  uint64_t k = options.K;
+  std::vector<float> disk_result_dists(k);
+  std::vector<TagT> disk_result_tags(k);
+  diskann::QueryStats tmp;
+  this->index->cached_beam_search_excludes(query, k, search_L, disk_result_tags.data(), disk_result_dists.data(), beamwidth, exclude_set_list, &tmp, thread_data);
+  stats->Aggregate(tmp);
+  stat.Aggregate(tmp);
+  for(unsigned i = 0; i < disk_result_tags.size(); i++){
+    res.emplace_back(disk_result_tags[i], disk_result_dists[i]);
+  }
+}
+
 template<typename T, typename TagT>
 void PQFlashIndexProxy<T, TagT>::ReloadIndex(const std::string &disk_index_prefix){
   // std::string disk_index_data_path = disk_index_prefix + "_disk.index";
@@ -125,6 +146,42 @@ std::string PQFlashIndexProxy<T, TagT>::ReportIndexInfo(){
     oss << "Active tags: " << tags.size() << "; ";
     oss << ']';
     return oss.str();
+}
+template<typename T, typename TagT>
+diskann::ThreadData<T> PQFlashIndexProxy<T, TagT>::PopThreadData(){
+  return this->index->pop_thread_data();
+}
+template<typename T, typename TagT>
+void PQFlashIndexProxy<T, TagT>::PushThreadData(diskann::ThreadData<T> data){
+  this->index->push_thread_data(data);
+}
+template<typename T, typename TagT>
+void PQFlashIndexProxy<T, TagT>::PrecomputeChunkDistance(diskann::ThreadData<T>& data, const T *query){
+  this->index->precompute_chunk_distance(data, query);
+}
+template<typename T, typename TagT>
+float PQFlashIndexProxy<T, TagT>::GetMinClusterDistance(diskann::ThreadData<T>& thread_data){
+  auto query_scratch = &(thread_data.scratch);
+  float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+  uint32_t pq_nchunks = this->index->get_pq_config().second;
+  float total_shortest_distance = 0.0f;
+  for (_u64 chunk = 0; chunk < pq_nchunks; ++chunk) {
+      // 获取当前 chunk 的起始地址
+      const float *chunk_dists = pq_dists + 256 * chunk;
+      // 初始化当前 chunk 的最短距离为最大值
+      float shortest_distance_in_chunk = FLT_MAX;
+
+      // 遍历当前 chunk 的 256 个中心距离
+      for (_u64 i = 0; i < 256; ++i) {
+          if (chunk_dists[i] < shortest_distance_in_chunk) {
+              shortest_distance_in_chunk = chunk_dists[i];
+          }
+      }
+
+      // 将当前 chunk 的最短距离累加到总最短距离中
+      total_shortest_distance += shortest_distance_in_chunk;
+  }
+  return total_shortest_distance;
 }
 // template class instantiations
 template class PQFlashIndexProxy<float, uint32_t>;

@@ -891,7 +891,7 @@ namespace diskann {
   void create_disk_layout(std::shared_ptr<diskann::Index<T, TagT>> index,
                           bool               single_file_index,
                           const std::string &output_file) {
-    unsigned npts = index->_nd + index->_num_frozen_pts, ndims = index->_dim;
+    unsigned npts = index->_nd, ndims = index->_dim;
 
     // amount to read or write in one shot
     _u64            read_blk_size = 64 * 1024 * 1024;
@@ -908,8 +908,8 @@ namespace diskann {
     cached_ofstream diskann_writer;
     diskann_writer.open(output_file, write_blk_size);
     // metadata: width, medoid
-    unsigned width_u32 = index->_width, medoid_u32 = index->_ep;
-    _u64     vamana_frozen_num = index->_num_frozen_pts, vamana_frozen_loc = 0;
+    unsigned width_u32 = index->_width, medoid_u32 = index->_dynamic_ep;
+    _u64     vamana_frozen_num = 0, vamana_frozen_loc = 0;
     // compute
     _u64 medoid, max_node_len, nnodes_per_sector;
     npts_64 = (_u64) npts;
@@ -1004,7 +1004,7 @@ namespace diskann {
     diskann_writer.close();
     // save tags
     size_t tag_bytes_written = 0;
-    index->save_tags(output_file + std::string(".tags"));
+    index->save_tags_without_ep(output_file + std::string(".tags"));
 
     output_file_meta.push_back(output_file_meta[output_file_meta.size() - 1] +
                                tag_bytes_written);
@@ -1206,11 +1206,11 @@ namespace diskann {
     std::string medoids_path = disk_index_path + "_medoids.bin";
     std::string centroids_path = disk_index_path + "_centroids.bin";
     std::string sample_base_prefix = index_prefix_path + "_sample";
-    size_t points_num = index->_nd + index->_num_frozen_pts, dim = index->_dim;
-    auto   training_set_size =
+    size_t      points_num = index->_nd, dim = index->_dim;
+    auto        training_set_size =
         PQ_TRAINING_SET_FRACTION / 2 * points_num > MAX_PQ_TRAINING_SET_SIZE
-              ? MAX_PQ_TRAINING_SET_SIZE
-              : (_u32) std::round(PQ_TRAINING_SET_FRACTION / 2 * points_num);
+                   ? MAX_PQ_TRAINING_SET_SIZE
+                   : (_u32) std::round(PQ_TRAINING_SET_FRACTION / 2 * points_num);
     training_set_size = (training_set_size == 0) ? 1 : training_set_size;
     diskann::cout << "Index has: " << points_num
                   << " points. Changing training set size to "

@@ -16,6 +16,7 @@
 #include "lsm/merger/util/index_data_iterator.h"
 #include "lsm/options.h"
 #include "lsm/level/level_index.h"
+#include "lsm/merger/util/sector_buffer_pool.h"
 
 namespace lsmidx
 {
@@ -31,9 +32,11 @@ struct DiskIndexParam{
 template<typename T, typename TagT = uint32_t>
 class DiskIndexMerger{
   public:
+    std::shared_ptr<ReadOnlySectorBufferPool> buf_pool;
     DiskIndexFileMeta meta;
     tsl::robin_set<unsigned> delete_local_id_set;
-    tsl::robin_set<uint32_t>  free_local_ids;
+    // tsl::robin_set<uint32_t>  free_local_ids;
+    std::priority_queue<uint32_t, std::vector<uint32_t>, std::greater<uint32_t>> free_local_ids;
     diskann::GraphDelta * delta;
     diskann::Metric dist_metric;
     diskann::Distance<T> * dist_cmp;
@@ -52,15 +55,17 @@ class DiskIndexMerger{
     // 更新本索引中需要删除的点的local id
     void AddDeleteLocalID(tsl::robin_set<TagT>& deleted_tags);
     // 收集所有被删除的点及其未删除的邻居节点
-    tsl::robin_map<uint32_t, std::vector<uint32_t>> PopulateNondeletedHoodsOfDeletedNodes();
+    tsl::robin_map<uint32_t, std::vector<uint32_t>> PopulateNondeletedHoodsOfDeletedNodes(diskann::MergeStats* stats = nullptr);
 
     void ProcessDeletes(DiskIndexFileMeta& temp_index_file_meta,
                         tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods,
-                        std::vector<uint8_t *>& thread_bufs);
+                        std::vector<uint8_t *>& thread_bufs,
+                        diskann::MergeStats* stats = nullptr);
+    void ProcessDeletes(DiskIndexFileMeta& temp_index_file_meta, std::vector<uint8_t *>& thread_bufs, diskann::MergeStats* stats = nullptr);
     
     void ProcessInserts(std::vector<diskann::DiskNode<T>>& insert_nodes, TagT* insert_nodes_tag_list, DiskIndexDataIterator<T, TagT>& index_data_iter, tsl::robin_set<TagT>* delete_tag_set = nullptr, int frozen_location=-1);
 
-    void ProcessPatch(DiskIndexFileMeta& final_index_file_meta, std::vector<uint8_t *>& thread_bufs);
+    void ProcessPatch(DiskIndexFileMeta& final_index_file_meta, std::vector<uint8_t *>& thread_bufs, diskann::MergeStats* stats = nullptr);
 
     void OffsetIterateToFixedPoint(const T *vec, const uint32_t Lsize,
                                   std::vector<diskann::Neighbor> & expanded_nodes_info,
@@ -137,14 +142,12 @@ class DiskIndexMerger{
       return this->param.alpha;
     }
     DiskIndexDataIterator<T, TagT> GetIterator();
-    bool IsFree(uint32_t local_id);
-    void BookId(uint32_t local_id);
     void WriteDataFileHeaderAfterInsertPhase();
-    bool TagExist(TagT tag);
-    void TagInfo();
     void ReportGraphDelta();
   private:
     bool ConsolidateDeletes(diskann::DiskNode<T> &disk_node, uint8_t * scratch, tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods);
+    bool ConsolidateDeletes(diskann::DiskNode<T> &disk_node, uint8_t * scratch, DiskIndexDataIterator<T,TagT>& data_iter, tsl::robin_map<uint32_t, std::vector<uint32_t>>& disk_deleted_nhoods, std::shared_mutex& mutex,
+    diskann::MergeStats* stats = nullptr);
     /**
      * Predicate Functions
     */

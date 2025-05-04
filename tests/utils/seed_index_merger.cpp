@@ -170,7 +170,7 @@ void run(const uint32_t base_count, const uint32_t num_mem_indices,
     //  dump_to_disk(all_points, ndims, out_prefix + "_oneshot", rem_tags);
   }
   // free all points
-  delete all_points;
+  delete[] all_points;
 }
 
 int main(int argc, char **argv) {

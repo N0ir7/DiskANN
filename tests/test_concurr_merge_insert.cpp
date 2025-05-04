@@ -13,7 +13,7 @@
 #include <timer.h>
 #include <iomanip>
 #include <atomic>
-
+#include <dirent.h>
 #include "aux_utils.h"
 #include "utils.h"
 #include "math_utils.h"
@@ -57,10 +57,71 @@ std::string TMP_FOLDER;
 std::string query_file = "";
 std::string truthset_file = "";
 std::string log_prefix = "";
+std::string index_dir = "";
 unsigned   *gt_ids = nullptr;
 uint32_t   *gt_tags = nullptr;
 float      *gt_dists = nullptr;
 size_t      gt_num, gt_dim;
+std::string extractPath(const std::string &input) {
+  size_t lastSlashPos = input.find_last_of('/');
+  if (lastSlashPos != std::string::npos) {
+    return input.substr(0, lastSlashPos);
+  }
+  return input;
+}
+void ShowMemoryStatus(int iter) {
+  int current_time = global_timer.elapsed() / 1000000;
+
+  int           tSize = 0, resident = 0, share = 0;
+  std::ifstream buffer("/proc/self/statm");
+  buffer >> tSize >> resident >> share;
+  buffer.close();
+  long page_size_kb = sysconf(_SC_PAGE_SIZE) /
+                      1024;  // in case x86-64 is configured to use 2MB pages
+  double rss = resident * page_size_kb / 1024;
+
+  std::cout << "memory current time: " << current_time << " RSS : " << rss
+            << " MB" << std::endl;
+  const char    *dir = ::index_dir.c_str();
+  DIR           *dp;
+  struct dirent *entry;
+  struct stat    statbuf;
+  long           dir_size = 0;
+
+  if ((dp = opendir(dir)) == NULL) {
+    fprintf(stderr, "Cannot open dir: %s\n", dir);
+    exit(0);
+  }
+
+  chdir(dir);
+
+  while ((entry = readdir(dp)) != NULL) {
+    lstat(entry->d_name, &statbuf);
+    dir_size += statbuf.st_size;
+  }
+  chdir("..");
+  closedir(dp);
+  dir_size /= (1024 * 1024);
+  std::cout << "disk usage : " << dir_size << " MB" << std::endl;
+  /**
+   * Output file
+   */
+  std::string   log_file_path = ::log_prefix + "_storage_use.csv";
+  bool          is_new_file = !file_exists(log_file_path);
+  std::ofstream log_file(log_file_path, std::ios::app);
+  if (log_file.is_open()) {
+    // 如果是新文件，则写入表头
+    if (is_new_file) {
+      log_file << "iter,period,mem_use(MB),disk_use(MB)" << std::endl;
+    }
+    // 追加数据
+    log_file << iter << "," << current_time << "," << rss << "," << dir_size
+             << std::endl;
+    log_file.close();
+  } else {
+    std::cerr << "Failed to open storage_use log file!" << std::endl;
+  }
+}
 template<typename T, typename TagT = uint32_t>
 void seed_insert_iter(tsl::robin_set<uint32_t> &active_set,
                       tsl::robin_set<uint32_t> &inactive_set,
@@ -131,9 +192,9 @@ void seed_insert_iter(tsl::robin_set<uint32_t> &active_set,
   diskann::cout << "ITER: end = " << active_set.size() << ", "
                 << inactive_set.size() << "\n";
 #ifndef _WINDOWS
-  std::cout << "ITER: end = " << active_set.size() << ", "
-            << inactive_set.size() << "\n";
-  malloc_stats();
+  // std::cout << "ITER: end = " << active_set.size() << ", "
+  //           << inactive_set.size() << "\n";
+  // malloc_stats();
 #endif
 }
 /**
@@ -227,11 +288,11 @@ void seed_iter(tsl::robin_set<uint32_t> &active_set,
 
   diskann::cout << "ITER: end = " << active_set.size() << ", "
                 << inactive_set.size() << "\n";
-#ifndef _WINDOWS
-  std::cout << "ITER: end = " << active_set.size() << ", "
-            << inactive_set.size() << "\n";
-  malloc_stats();
-#endif
+  // #ifndef _WINDOWS
+  //   std::cout << "ITER: end = " << active_set.size() << ", "
+  //             << inactive_set.size() << "\n";
+  //   malloc_stats();
+  // #endif
 }
 
 float compute_active_recall(const uint32_t *result_tags,
@@ -422,8 +483,8 @@ void search_kernel(diskann::MergeInsert<T>        &merge_insert,
     std::cout << std::setw(6) << iter << std::setw(14) << reason
               << std::setw(14) << start << std::setw(14) << end << std::setw(4)
               << L << std::setw(12) << qps << std::setw(18)
-              << ((float) std::accumulate(latency_stats.begin(),
-                                          latency_stats.end(), 0)) /
+              << (std::accumulate(latency_stats.begin(), latency_stats.end(),
+                                  0.0)) /
                      (float) query_num
               << std::setw(12)
               << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
@@ -453,8 +514,8 @@ void search_kernel(diskann::MergeInsert<T>        &merge_insert,
       // 追加数据
       log_file << iter << "," << reason << "," << start << "," << end << ","
                << L << "," << qps << ","
-               << ((float) std::accumulate(latency_stats.begin(),
-                                           latency_stats.end(), 0)) /
+               << (std::accumulate(latency_stats.begin(), latency_stats.end(),
+                                   0.0)) /
                       (float) query_num
                << ","
                << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
@@ -485,7 +546,7 @@ void merge_kernel(diskann::MergeInsert<T> &merge_insert) {
     exit(-1);
   }
   auto start = ::global_timer.elapsed() / 1000000;
-  merge_insert.final_merge();
+  merge_insert.trigger_merge();
   auto end = ::global_timer.elapsed() / 1000000;
   auto diff = end - start;
   /**
@@ -538,10 +599,11 @@ void insertion_kernel(diskann::MergeInsert<T> &merge_insert,
               << std::endl;
     exit(-1);
   }
-  _s64                i;
-  std::vector<double> insert_latencies(npts, 0);
-  diskann::Timer      timer;
-  auto                start = ::global_timer.elapsed() / 1000000;
+  _s64                  i;
+  std::vector<double>   insert_latencies(npts, 0);
+  diskann::Timer        timer;
+  diskann::InsertStats *stats = new diskann::InsertStats[npts];
+  auto                  start = ::global_timer.elapsed() / 1000000;
 #pragma omp parallel for num_threads(NUM_INSERT_THREADS)
   for (i = 0; i < (_s64) npts; i++) {
     diskann::Timer insert_timer;
@@ -551,8 +613,8 @@ void insertion_kernel(diskann::MergeInsert<T> &merge_insert,
     // } else {
     //   std::cout << "Point " << i << "could not be inserted." << std::endl;
     // }
-    while (merge_insert.insert(data_insert + i * aligned_dim, tag_data[i]) !=
-           0) {
+    while (merge_insert.insert(data_insert + i * aligned_dim, tag_data[i],
+                               stats + i) != 0) {
       // std::this_thread::sleep_for(std::chrono::milliseconds(500));
       bool expected = true;
       if (::_merge_done.compare_exchange_strong(expected, false)) {
@@ -594,8 +656,8 @@ void insertion_kernel(diskann::MergeInsert<T> &merge_insert,
             << std::endl;
   std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(11)
             << qps << std::setw(18) << diff << std::setw(18)
-            << ((float) std::accumulate(insert_latencies.begin(),
-                                        insert_latencies.end(), 0)) /
+            << (std::accumulate(insert_latencies.begin(),
+                                insert_latencies.end(), 0.0)) /
                    (float) npts
             << std::setw(18)
             << insert_latencies[(size_t) (0.1 * ((double) npts))]
@@ -629,9 +691,9 @@ void insertion_kernel(diskann::MergeInsert<T> &merge_insert,
     }
 
     // 计算 Mean Latency
-    float mean_latency = ((float) std::accumulate(insert_latencies.begin(),
-                                                  insert_latencies.end(), 0)) /
-                         (float) npts;
+    double mean_latency = (std::accumulate(insert_latencies.begin(),
+                                           insert_latencies.end(), 0.0)) /
+                          (float) npts;
 
     // 追加数据
     insert_log_file << start << "," << end << "," << qps << "," << diff << ","
@@ -652,6 +714,13 @@ void insertion_kernel(diskann::MergeInsert<T> &merge_insert,
   }
 
   ::_insertions_done.store(true);
+  diskann::InsertStats totalStats;
+  for (size_t i = 0; i < npts; i++) {
+    totalStats.Aggregate(stats[i]);
+  }
+  std::cout << "Insert Count: " << npts
+            << " ;InsertStats: " << totalStats.ToString() << std::endl;
+  delete[] stats;
   delete[] data_insert;
   delete[] tag_data;
 }
@@ -714,8 +783,9 @@ void run_merge_insert_iter(int iter, diskann::MergeInsert<T> &merge_insert,
   // files for mem-DiskANN
   std::string mem_pts_file = mem_prefix + ".data_orig";
   std::string mem_tags_file = mem_prefix + ".tags_orig";
-  std::this_thread::sleep_for(std::chrono::seconds(10));  // 休眠10秒以确保同步
+  std::this_thread::sleep_for(std::chrono::seconds(1));  // 休眠1秒以确保同步
   // search_kernel<T>(merge_insert, active_set);
+  ShowMemoryStatus(iter);
   bool expected = true;
   if (::_merge_done.compare_exchange_strong(expected, false)) {
     // 异步启动合并任务，调用 merge_kernel 函数
@@ -727,18 +797,18 @@ void run_merge_insert_iter(int iter, diskann::MergeInsert<T> &merge_insert,
     // std::cout << "Search while insert at " << ::global_timer.elapsed() /
     // 1000000
     // << std::endl;
-
+    ShowMemoryStatus(iter);
     // 调用 search_kernel 执行搜索操作，使用 active_set
     search_kernel<T>(merge_insert, active_set, iter, "while insert");
 
-    // 每次搜索后休眠 10 秒
-    std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+    // 每次搜索后休眠 1 秒
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 
   // 如果插入和删除操作已完成，重置状态并执行后续操作
   if (::_insertions_done.load()) {
     ::_insertions_done.store(false);
-
+    ShowMemoryStatus(iter);
     // 调用 search_kernel 执行搜索操作，使用 active_set
     search_kernel<T>(merge_insert, active_set, iter, "before insert");
 
@@ -755,51 +825,49 @@ void run_merge_insert_iter(int iter, diskann::MergeInsert<T> &merge_insert,
   }
   // 检查合并任务的状态
   while (!(::_merge_done.load())) {
+    ShowMemoryStatus(iter);
     // 在合并任务进行过程中，不断执行搜索操作
     search_kernel<T>(merge_insert, active_set, iter, "while merge");
 
-    // 每次搜索后休眠10秒
-    std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+    // 每次搜索后休眠1秒
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 }
 
 template<typename T, typename TagT = uint32_t>
-void run_iter(diskann::MergeInsert<T>  &merge_insert,
+void run_iter(int iter, diskann::MergeInsert<T> &merge_insert,
               const std::string        &mem_prefix,
               tsl::robin_set<uint32_t> &active_set,
               tsl::robin_set<uint32_t> &inactive_set) {
   // files for mem-DiskANN
   std::string mem_pts_file = mem_prefix + ".data_orig";
   std::string mem_tags_file = mem_prefix + ".tags_orig";
-  std::this_thread::sleep_for(std::chrono::seconds(10));  // 休眠10秒以确保同步
+  std::this_thread::sleep_for(std::chrono::seconds(1));  // 休眠10秒以确保同步
 
-  // 异步启动合并任务，调用 merge_kernel 函数
-  ::merge_future =
-      std::async(std::launch::async, merge_kernel<T>, std::ref(merge_insert));
-
+  bool expected = true;
+  if (::_merge_done.compare_exchange_strong(expected, false)) {
+    // 异步启动合并任务，调用 merge_kernel 函数
+    ::merge_future =
+        std::async(std::launch::async, merge_kernel<T>, std::ref(merge_insert));
+  }
   // 在插入和删除操作未完成时，不断执行搜索操作
   while (!(::_insertions_done.load() && ::_del_done.load())) {
-    std::cout << "Search at " << ::global_timer.elapsed() / 1000000
-              << " seconds " << std::endl;
-
+    ShowMemoryStatus(iter);
     // 调用 search_kernel 执行搜索操作，使用 active_set
-    search_kernel<T>(merge_insert, active_set);
+    search_kernel<T>(merge_insert, active_set, iter, "while insert");
 
-    // 每次搜索后休眠 5 秒
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    // 每次搜索后休眠 1 秒
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 
   // 如果插入和删除操作已完成，重置状态并执行后续操作
   if (::_insertions_done.load() && ::_del_done.load()) {
     ::_insertions_done.store(false);
     ::_del_done.store(false);
-
-    std::cout << "Searching all indices" << std::endl;
-    std::cout << "Search at " << ::global_timer.elapsed() / 1000000
-              << " seconds " << std::endl;
+    ShowMemoryStatus(iter);
 
     // 调用 search_kernel 执行搜索操作，使用 active_set
-    search_kernel<T>(merge_insert, active_set, true);
+    search_kernel<T>(merge_insert, active_set, iter, "before insert");
 
     std::cout << "ITER: Seeding iteration"
               << "\n";
@@ -819,18 +887,14 @@ void run_iter(diskann::MergeInsert<T>  &merge_insert,
   }
   // 检查合并任务的状态
   std::future_status merge_status;
-  do {
-    // 非阻塞式等待合并任务完成，每次等待1毫秒
-    merge_status = ::merge_future.wait_for(std::chrono::milliseconds(1));
-    std::cout << "Search at " << ::global_timer.elapsed() / 1000000
-              << " seconds " << std::endl;
-
+  while (!(::_merge_done.load())) {
+    ShowMemoryStatus(iter);
     // 在合并任务进行过程中，不断执行搜索操作
-    search_kernel<T>(merge_insert, active_set);
+    search_kernel<T>(merge_insert, active_set, iter, "while merge");
 
     // 每次搜索后休眠1秒
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-  } while ((merge_status != std::future_status::ready));
+  }
 }
 template<typename T, typename TagT = uint32_t>
 void run_search_iter(diskann::MergeInsert<T>  &merge_insert,
@@ -976,7 +1040,7 @@ void run_all_iters(std::string base_prefix, std::string merge_prefix,
                       params[std::string("disk_search_node_cache_count")]);
   paras.Set<unsigned>("num_search_threads",
                       params[std::string("disk_search_nthreads")]);
-
+  ShowMemoryStatus(-1);
   const std::string             working_folder = ::TMP_FOLDER;
   diskann::Metric               metric = diskann::Metric::L2;
   diskann::MergeInsert<T, TagT> merge_insert(
@@ -1006,7 +1070,7 @@ void run_all_iters(std::string base_prefix, std::string merge_prefix,
       run_merge_insert_iter<T>(i, merge_insert, mem_prefix, active_tags,
                                inactive_tags);
     } else {
-      run_iter<T>(merge_insert, mem_prefix, active_tags, inactive_tags);
+      run_iter<T>(i, merge_insert, mem_prefix, active_tags, inactive_tags);
     }
   }
   while (!(::_insertions_done.load())) {
@@ -1138,7 +1202,7 @@ int main(int argc, char **argv) {
     active_tags_filename = base_prefix + "_disk.index";
   else
     active_tags_filename = base_prefix + "_disk.index.tags";
-
+  ::index_dir = extractPath(base_prefix);
   // load truthset
   if (!::merge_only) {
     std::cout << "Loading truthset : " << ::truthset_file << std::endl;

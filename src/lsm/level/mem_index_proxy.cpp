@@ -30,15 +30,26 @@ InMemIndexProxy<T, TagT>::InMemIndexProxy(diskann::Metric dist_metric, std::stri
     }
 }
 template<typename T, typename TagT>
-void InMemIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, [[maybe_unused]] diskann::QueryStats * stats){
+void InMemIndexProxy<T, TagT>::KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, [[maybe_unused]] diskann::QueryStats * stats){
   uint64_t search_L = options.search_L;
   uint64_t k = options.K;
-//   auto lock = this->GetReadLock();
-
+  std::vector<diskann::Neighbor_Tag<TagT>> local_res;
   if(index->get_num_points() > 0){
-    index->search(query, (uint32_t)k, (uint32_t)search_L, res);
+    index->search(query, (uint32_t)k, (uint32_t)search_L, local_res);
   }
-
+  for(auto& nbr : local_res){
+    bool deleted = false;
+    for(auto& exclude_set : exclude_set_list){
+        if(exclude_set->IsDelete(nbr.tag)){
+            deleted = true;
+            break;
+        }
+    }
+    if(deleted){
+        continue;
+    }
+    res.emplace_back(nbr);
+  }
 }
 
 template<typename T, typename TagT>
@@ -49,15 +60,14 @@ int InMemIndexProxy<T, TagT>::LazyDelete(TagT tag){
 }
 
 template<typename T, typename TagT>
-int InMemIndexProxy<T, TagT>::Put([[maybe_unused]] const WriteOptions& options, const VecSlice<T>& key, const TagT& tag){
+int InMemIndexProxy<T, TagT>::Put([[maybe_unused]] const WriteOptions& options, const VecSlice<T>& key, const TagT& tag, diskann::InsertStats * stats){
     const T* point = key.data();
 
-    // auto write_lock = this->GetWriteLock();
     if(this->index->get_num_points() >= this->index->return_max_points()){
         diskann::cout << "Capacity exceeded" << std::endl;
         return -2;
     }
-    if(index->insert_point(point, *this->paras.get(), tag) != 0){
+    if(index->insert_point(point, *this->paras.get(), tag, stats) != 0){
         diskann::cout << "Could not insert point with tag " << tag << std::endl;
         return -3;
     }
@@ -66,26 +76,18 @@ int InMemIndexProxy<T, TagT>::Put([[maybe_unused]] const WriteOptions& options, 
 
 template<typename T, typename TagT>
 std::string InMemIndexProxy<T, TagT>::SaveIndex(){
-    // auto lock = this->GetReadLock();
-    // auto delete_lock = this->GetReadDeleteLock();
     this->index->save(this->index_prefix.c_str());
     this->delete_tag_set.Save(this->index_prefix);
     return this->index_prefix;
 }
 template<typename T, typename TagT>
 void InMemIndexProxy<T, TagT>::ClearIndex(){
-    // auto lock = this->GetWriteLock();
-    // auto delete_lock = this->GetWriteDeleteLock();
-    // 进行clear
-    // this->index.reset();
     this->index->clear_index();
     this->index->enable_delete();
-    // this->index = std::make_shared<diskann::Index<T, TagT>>(this->dist_metric, this->dimension, this->merge_thresh * 2 , 1, this->is_single_file_index, 1);
     this->delete_tag_set.Clear();
 }
 template<typename T, typename TagT>
 int InMemIndexProxy<T, TagT>::GetCurrentNumPoints(){
-    // auto lock = this->GetReadLock();
     return this->index->get_num_points();
 }
 template<typename T, typename TagT>

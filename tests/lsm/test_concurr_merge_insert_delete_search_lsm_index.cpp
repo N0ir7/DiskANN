@@ -38,6 +38,8 @@ tsl::robin_map<std::string, uint32_t> params;
 float                                 mem_alpha, merge_alpha;
 std::atomic_bool      _insertions_done(true);
 std::atomic_bool      _del_done(true);
+std::atomic_bool      _redistribute_done(false);
+std::atomic_bool      _merge_mem_start(false);
 std::atomic_bool      _merge_mem_done(true);
 std::atomic_bool      _merge_level0_done(true);
 std::atomic_bool      _merge_level0_start(false);
@@ -105,7 +107,7 @@ void ShowMemoryStatus(int iter) {
           log_file << "iter,period,mem_use(MB),disk_use(MB)" << std::endl;
       }
       // 追加数据
-      log_file << iter << ","<< current_time << "," << rss << "," << dir_size << "," << std::endl;
+      log_file << iter << ","<< current_time << "," << rss << "," << dir_size << std::endl;
       log_file.close();
   } else {
       std::cerr << "Failed to open storage_use log file!" << std::endl;
@@ -279,12 +281,9 @@ void seed_iter(tsl::robin_set<uint32_t> &active_set,
   inactive_set.insert(delete_vec.begin(), delete_vec.end());
   active_set.insert(insert_vec.begin(), insert_vec.end());
 
-  diskann::cout << "ITER: end = " << active_set.size() << ", "
-                << inactive_set.size() << "\n";
 #ifndef _WINDOWS
   std::cout << "ITER: end = " << active_set.size() << ", "
             << inactive_set.size() << "\n";
-  malloc_stats();
 #endif
 }
 
@@ -297,23 +296,11 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
 
   // hold data
   T        *query = nullptr;
-  // unsigned *gt_ids = nullptr;
-  // uint32_t *gt_tags = nullptr;
-  // float    *gt_dists = nullptr;
   size_t    query_num, query_dim, query_aligned_dim;
-  // size_t    query_num, query_dim, query_aligned_dim, gt_num, gt_dim;
   // load query + truthset
   std::cout << "Loading query : " << ::query_file << std::endl;
   diskann::load_aligned_bin<T>(::query_file, query, query_num, query_dim,
                                query_aligned_dim);
-
-  // std::cout << "Loading truthset : " << ::truthset_file << std::endl;
-  // diskann::load_truthset(::truthset_file, gt_ids, gt_dists, gt_num, gt_dim,
-  //                        &gt_tags);
-  // if (gt_num != query_num) {
-  //   std::cout << "Error. Mismatch in number of queries and ground truth data"
-  //             << std::endl;
-  // }
 
   // prep for search
   std::vector<uint32_t> query_result_ids;
@@ -333,7 +320,7 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
     omp_set_max_active_levels(4);
 #pragma omp parallel for num_threads(NUM_SEARCH_THREADS)
     for (_s64 i = 0; i < (int64_t) query_num; i++) {
-      lsmidx::SearchOptions sopts;
+      lsmidx::SearchOptions sopts; 
       sopts.K = recall_at;
       sopts.search_L = L;
       sopts.beamwidth = params[std::string("beam_width")];
@@ -363,6 +350,12 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
     float mean_ios = (float) diskann::get_mean_stats(
         stats, query_num,
         [](const diskann::QueryStats &stats) { return stats.n_ios; });
+    float sum_skip = (float) diskann::get_sum_stats(
+        stats, query_num,
+        [](const diskann::QueryStats &stats) { return stats.n_skip_level0_num; });
+    float sum_level0_num = (float) diskann::get_sum_stats(
+        stats, query_num,
+        [](const diskann::QueryStats &stats) { return stats.level0_num; });
     std::sort(latency_stats.begin(), latency_stats.end());
     /**
      * Output log
@@ -373,15 +366,15 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
               << std::setw(12) << "90 Latency" << std::setw(12) << "95 Latency"
               << std::setw(12) << "99 Latency" << std::setw(12)
               << "99.9 Latency" << std::setw(12) << recall_string
-              << std::setw(12) << "Mean disk IOs" << std::endl;
+              << std::setw(12) << "Mean disk IOs" << std::setw(18) << "sum level0_skip" << std::setw(18) << "sum level0_num" << std::endl;
     std::cout
         << "=============================search=================================="
            "==============="
         << std::endl;
     std::cout << std::setw(6) << iter << std::setw(14) << reason << std::setw(14) << start << std::setw(14) << end << std::setw(4) << L
               << std::setw(12) << qps << std::setw(18)
-              << ((float) std::accumulate(latency_stats.begin(),
-                                          latency_stats.end(), 0)) /
+              << (std::accumulate(latency_stats.begin(),
+                                          latency_stats.end(), 0.0)) /
                      (float) query_num
               << std::setw(12)
               << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
@@ -392,7 +385,12 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
               << std::setw(12)
               << (float) latency_stats[(_u64) (0.999 * ((double) query_num))]
               << std::setw(12) << mean_recall << std::setw(12) << mean_ios
+              << std::setw(18) << sum_skip
+              << std::setw(18) << sum_level0_num
               << std::endl;
+    if(mean_recall<95 && reason == "before insert"){
+      diskann::cout<<"low recall,stop!"<<std::endl;
+    }
     /**
      * output csv
     */
@@ -404,13 +402,13 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
         if (is_new_file) {
             log_file << "iter,reason,period start,period end,Ls,QPS,Mean Latency (ms),90 Latency,"
                         "95 Latency,99 Latency,99.9 Latency," << recall_string
-                    << ",Mean disk IOs" << std::endl;
+                    << ",Mean disk IOs,level0_skip,level0_num" << std::endl;
         }
 
         // 追加数据
         log_file << iter << ","<< reason << ","<< start << "," << end << "," << L << "," << qps << ","
-                << ((float) std::accumulate(latency_stats.begin(),
-                                            latency_stats.end(), 0)) /
+                << (std::accumulate(latency_stats.begin(),
+                                            latency_stats.end(), 0.0)) /
                         (float) query_num
                 << ","
                 << (float) latency_stats[(_u64) (0.90 * ((double) query_num))]
@@ -420,7 +418,7 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
                 << (float) latency_stats[(_u64) (0.99 * ((double) query_num))]
                 << ","
                 << (float) latency_stats[(_u64) (0.999 * ((double) query_num))]
-                << "," << mean_recall << "," << mean_ios << std::endl;
+                << "," << mean_recall << "," << mean_ios << "," << sum_skip << "," << sum_level0_num << std::endl;
 
         log_file.close();
     } else {
@@ -436,92 +434,64 @@ void search_kernel(int iter, lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
 
 template<typename T, typename TagT = uint32_t>
 void merge_mem_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index) {
-  
-  if (!(::_merge_mem_done.load())) {
-    auto start = ::global_timer.elapsed() / 1000000;
-    lsm_index.TriggerMergeMemIndex();
-    auto end = ::global_timer.elapsed() / 1000000;
-    auto diff = end - start;
-    /**
-     * Output logs
-    */
-    std::cout << std::setw(14) << "period start" << std::setw(14) << "period end" << std::setw(15) << "merge mem time(s)"
-              << std::endl;
-    std::cout << "===============merge_mem================" << std::endl;
-    std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(15) << diff
-              << std::endl;
-    /**
-     * Output csv
-    */
-    std::string merge_log_file_path = log_prefix + "_merge_mem.csv";
-    bool is_new_file = !file_exists(merge_log_file_path);  // 判断是否是新文件
+  while(::_merge_mem_start.load()){
+    bool expected = true;
+    if (::_merge_mem_done.compare_exchange_strong(expected, false)) {
+      auto start = ::global_timer.elapsed() / 1000000;
+      lsm_index.TriggerMergeMemIndex();
+      auto end = ::global_timer.elapsed() / 1000000;
+      auto diff = end - start;
+      /**
+       * Output logs
+      */
+      std::cout << std::setw(14) << "period start" << std::setw(14) << "period end" << std::setw(15) << "merge mem time(s)"
+                << std::endl;
+      std::cout << "===============merge_mem================" << std::endl;
+      std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(15) << diff
+                << std::endl;
+      /**
+       * Output csv
+      */
+      std::string merge_log_file_path = log_prefix + "_merge_mem.csv";
+      bool is_new_file = !file_exists(merge_log_file_path);  // 判断是否是新文件
 
-    std::ofstream merge_log_file(merge_log_file_path, std::ios::app);
-    if (merge_log_file.is_open()) {
-        // 只有新文件才写入表头
-        if (is_new_file) {
-            merge_log_file << "period start,period end,merge mem time(s)" << std::endl;
-        }
+      std::ofstream merge_log_file(merge_log_file_path, std::ios::app);
+      if (merge_log_file.is_open()) {
+          // 只有新文件才写入表头
+          if (is_new_file) {
+              merge_log_file << "period start,period end,merge mem time(s)" << std::endl;
+          }
 
-        // 追加数据
-        merge_log_file << start << "," << end << "," << diff << std::endl;
+          // 追加数据
+          merge_log_file << start << "," << end << "," << diff << std::endl;
 
-        merge_log_file.close();
-    } else {
-        std::cerr << "Failed to open merge_mem log file!" << std::endl;
+          merge_log_file.close();
+      } else {
+          std::cerr << "Failed to open merge_mem log file!" << std::endl;
+      }
+      ::_merge_mem_done.store(true);
+    }else{
+      std::cout << "_merge_mem_done is already true" << std::endl;
     }
-    ::_merge_mem_done.store(true);
-  }else{
-    std::cout << "_merge_mem_done is already true" << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(5));
   }
 }
 template<typename T, typename TagT = uint32_t>
 void merge_disk_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index) {
-  // bool expected = true;
-  // if (::_merge_mem_done.compare_exchange_strong(expected,false)) {
-  //   auto start = ::global_timer.elapsed() / 1000000;
-  //   lsm_index.TriggerMergeMemIndex();
-  //   auto end = ::global_timer.elapsed() / 1000000;
-  //   auto diff = end - start;
-  //   /**
-  //    * Output logs
-  //   */
-  //   std::cout << std::setw(14) << "period start" << std::setw(14) << "period end" << std::setw(15) << "merge mem time(s)"
-  //             << std::endl;
-  //   std::cout << "===============merge_mem================" << std::endl;
-  //   std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(15) << diff
-  //             << std::endl;
-  //   /**
-  //    * Output csv
-  //   */
-  //   std::string merge_log_file_path = log_prefix + "_merge_mem.csv";
-  //   bool is_new_file = !file_exists(merge_log_file_path);  // 判断是否是新文件
-
-  //   std::ofstream merge_log_file(merge_log_file_path, std::ios::app);
-  //   if (merge_log_file.is_open()) {
-  //       // 只有新文件才写入表头
-  //       if (is_new_file) {
-  //           merge_log_file << "period start,period end,merge mem time(s)" << std::endl;
-  //       }
-
-  //       // 追加数据
-  //       merge_log_file << start << "," << end << "," << diff << std::endl;
-
-  //       merge_log_file.close();
-  //   } else {
-  //       std::cerr << "Failed to open merge_mem log file!" << std::endl;
-  //   }
-  //   ::_merge_mem_done.store(true);
-  // }else{
-  //   std::cout << "_merge_mem_done is already true" << std::endl;
-  // }
   while(::_merge_level0_start.load()){
     bool expected = true;
     if(::_merge_level0_done.compare_exchange_strong(expected, false)){
+      diskann::MergeStats stats;
       auto start = ::global_timer.elapsed() / 1000000;
-      lsm_index.TriggerMergeDiskIndex(0);
+      lsm_index.TriggerMergeDiskIndex(0, &stats);
       auto end = ::global_timer.elapsed() / 1000000;
       auto diff = end - start;
+      if(stats.delete_phase_random_read_4k != 0 && stats.delete_phase_seq_read_4k != 0){
+        float thresh = stats.delete_phase_seq_read_4k * lsmidx::config::redistribute_factor;
+        if(stats.delete_phase_random_read_4k >= thresh){
+          ::_redistribute_done.store(false);
+        }
+      }
       /**
        * output log
       */
@@ -540,11 +510,27 @@ void merge_disk_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index) {
       if (merge_log_file.is_open()) {
           // 只有新文件才写入表头
           if (is_new_file) {
-              merge_log_file << "period start,period end,merge disk time(s)" << std::endl;
+            merge_log_file
+              << "period start,period end,merge disk time(s),"
+              << "delete_phase_time,delete_phase_io_time,delete_phase_random_read_4k,"
+              << "delete_phase_seq_read_4k,delete_phase_random_write_4k,delete_phase_seq_write_4k,"
+              << "insert_phase_time,insert_phase_io_time,insert_phase_random_read_4k,"
+              << "insert_phase_seq_read_4k,insert_phase_random_write_4k,insert_phase_seq_write_4k,"
+              << "patch_phase_time,patch_phase_io_time,patch_phase_random_read_4k,"
+              << "patch_phase_seq_read_4k,patch_phase_random_write_4k,patch_phase_seq_write_4k"
+              << std::endl;
           }
 
           // 追加数据
-          merge_log_file << start << "," << end << "," << diff << std::endl;
+          merge_log_file 
+            << start << "," << end << "," << diff << ","
+            << stats.delete_phase_time << "," << stats.delete_phase_io_time << "," << stats.delete_phase_random_read_4k << ","
+            << stats.delete_phase_seq_read_4k << "," << stats.delete_phase_random_write_4k << "," << stats.delete_phase_seq_write_4k << ","
+            << stats.insert_phase_time << "," << stats.insert_phase_io_time << "," << stats.insert_phase_random_read_4k << ","
+            << stats.insert_phase_seq_read_4k << "," << stats.insert_phase_random_write_4k << "," << stats.insert_phase_seq_write_4k << ","
+            << stats.patch_phase_time << "," << stats.patch_phase_io_time << "," << stats.patch_phase_random_read_4k << ","
+            << stats.patch_phase_seq_read_4k << "," << stats.patch_phase_random_write_4k << "," << stats.patch_phase_seq_write_4k
+            << std::endl;
 
           merge_log_file.close();
       } else {
@@ -552,7 +538,7 @@ void merge_disk_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index) {
       }
       ::_merge_level0_done.store(true);
     }else{
-      std::cout << "_merge_level0_done is already true" << std::endl;
+      std::cout << "_merge_level0_done is already run" << std::endl;
     }
     std::this_thread::sleep_for(std::chrono::seconds(20));
   }
@@ -580,40 +566,30 @@ void insertion_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
   }
   _s64                i;
   std::vector<double> insert_latencies(npts, 0);
+  diskann::InsertStats *stats = new diskann::InsertStats[npts];
   diskann::Timer      timer;
   auto                start = ::global_timer.elapsed() / 1000000;
-  diskann::InsertStats *stats = new diskann::InsertStats[npts];
 #pragma omp parallel for num_threads(NUM_INSERT_THREADS)
   for (i = 0; i < (_s64) npts; i++) {
-    diskann::Timer insert_timer;
     lsmidx::WriteOptions opt;
     lsmidx::VecSlice<T> point_slice(data_insert + i * aligned_dim, aligned_dim);
     lsmidx::TagSlice<TagT> tag_slice(tag_data[i]);
     int ret = 0;
+    diskann::Timer insert_timer;
     while((ret = lsm_index.Put(opt, point_slice, tag_slice,stats + i)) != 0){
       if(ret == -2){
-        bool expected = true;
-        if (::_merge_mem_done.compare_exchange_strong(expected, false)) {
-          diskann::cout << "trigger a merge_mem in insert" << std::endl;
-          ::merge_mem_future =
-          std::async(std::launch::async, merge_mem_kernel<T, TagT>, std::ref(lsm_index));
-        }
-        if (expected) {
-          diskann::cout << "wait for 1 ms in insert" << std::endl;
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        } else {
-          diskann::cout << "wait for 1 s in insert" << std::endl;
-          std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
+        diskann::cout << "wait for 1 ms in insert" << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       } else {
         std::cout << "Point " << i << "could not be inserted." << std::endl;
         break;
       }
     }
     insert_latencies[i] = ((double) insert_timer.elapsed());
-    
-    if ((i % 1000 == 0) && (i > 0))
+
+    if ((i % 1000 == 0) && (i > 0)){
       std::cout << "Inserted another 1k points" << std::endl;
+    }
     
   }
   auto  diff = timer.elapsed() / 1000;
@@ -638,8 +614,8 @@ void insertion_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
             << std::endl;
   std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(11) << qps 
             << std::setw(18) << diff << std::setw(10) << npts << std::setw(18)
-            << ((float) std::accumulate(insert_latencies.begin(),
-                                        insert_latencies.end(), 0)) /
+            << ( std::accumulate(insert_latencies.begin(),
+                                        insert_latencies.end(), 0.0)) /
                    (float) npts
             << std::setw(18)
             << insert_latencies[(size_t) (0.1 * ((double) npts))]
@@ -670,7 +646,7 @@ void insertion_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
       }
 
       // 计算 Mean Latency
-      float mean_latency = ((float) std::accumulate(insert_latencies.begin(), insert_latencies.end(), 0)) /
+      double mean_latency = (std::accumulate(insert_latencies.begin(), insert_latencies.end(), 0.0)) /
                           (float) npts;
 
       // 追加数据
@@ -720,10 +696,10 @@ void deletion_kernel(lsmidx::LSMVectorIndex<T, TagT> &lsm_index,
    * Output log
   */
   std::cout << std::setw(14) << "Period start" << std::setw(14) << "Period end" 
-            << std::setw(5) << "qps"
+            << std::setw(10) << "qps"
             << std::setw(25) << "total Deletion time(ms)" << std::endl;
   std::cout << "============Deletion===================" << std::endl;
-  std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(5) << qps
+  std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(10) << qps
             << std::setw(25) << diff << std::endl;
   /**
    * Output csv
@@ -765,6 +741,47 @@ void copyToIteratedDirectory(int ITER, std::string source) {
     copyDirectory(source, destination);
 }
 template<typename T, typename TagT = uint32_t>
+void check_redistribute(lsmidx::LSMVectorIndex<T, TagT>& lsm_index){
+  if(!::_redistribute_done.load()){
+    while (!(::_insertions_done.load() && ::_del_done.load())){
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+    // 进行redistribute
+    auto start = ::global_timer.elapsed() / 1000000;
+    lsm_index.RedistributeDiskIndex();
+    auto end = ::global_timer.elapsed() / 1000000;
+    auto diff = end - start;
+    /**
+     * Output logs
+    */
+    std::cout << std::setw(14) << "period start" << std::setw(14) << "period end" << std::setw(15) << "redistribute time(s)"
+              << std::endl;
+    std::cout << "===============redistribute================" << std::endl;
+    std::cout << std::setw(14) << start << std::setw(14) << end << std::setw(15) << diff
+              << std::endl;
+    /**
+     * Output csv
+    */
+    std::string redistribute_log_file_path = log_prefix + "_redistribute.csv";
+    bool is_new_file = !file_exists(redistribute_log_file_path);  // 判断是否是新文件
+
+    std::ofstream redistribute_log_file(redistribute_log_file_path, std::ios::app);
+    if (redistribute_log_file.is_open()) {
+        // 只有新文件才写入表头
+        if (is_new_file) {
+            redistribute_log_file << "period start,period end,redistribute time(s)" << std::endl;
+        }
+
+        // 追加数据
+        redistribute_log_file << start << "," << end << "," << diff << std::endl;
+        redistribute_log_file.close();
+    } else {
+        std::cerr << "Failed to open redistribute log file!" << std::endl;
+    }
+    ::_redistribute_done.store(true);
+  }
+}
+template<typename T, typename TagT = uint32_t>
 void run_merge_insert_iter(int iter,lsmidx::LSMVectorIndex<T, TagT>& lsm_index,
               std::string directory,
               tsl::robin_set<uint32_t> &active_set,
@@ -773,52 +790,35 @@ void run_merge_insert_iter(int iter,lsmidx::LSMVectorIndex<T, TagT>& lsm_index,
   std::string insert_prefix = directory + "/insert";
   std::string insert_pts_file = insert_prefix + ".data_orig";
   std::string insert_tags_file = insert_prefix + ".tags_orig";
-  // int search_times = 4;
   std::this_thread::sleep_for(std::chrono::seconds(1));  // 休眠1秒以确保同步
   ShowMemoryStatus(iter);
-  // bool expected = true;
-  // if (::_merge_level0_done.compare_exchange_strong(expected, false)) {
-  //   // 异步启动合并任务，调用 merge_kernel 函数
-  //   ::merge_disk_future =
-  //       std::async(std::launch::async, merge_disk_kernel<T, TagT>, std::ref(lsm_index));
-  // }
   bool expected = false;
   if(::_merge_level0_start.compare_exchange_strong(expected, true)){
     ::merge_disk_future =
         std::async(std::launch::async, merge_disk_kernel<T, TagT>, std::ref(lsm_index));
   }
+  bool expected2 = false;
+  if (::_merge_mem_start.compare_exchange_strong(expected2, true)) {
+    ::merge_mem_future =
+    std::async(std::launch::async, merge_mem_kernel<T, TagT>, std::ref(lsm_index));
+  }
   // 在插入和删除操作未完成时，不断执行搜索操作
   while (!(::_insertions_done.load())) {
-    // std::cout << "Searching while insert at " << ::global_timer.elapsed() / 1000000 << std::endl;
     ShowMemoryStatus(iter);
     // 调用 search_kernel 执行搜索操作，使用 active_set
     
-    // if(search_times > 0){
-      search_kernel<T>(iter, lsm_index, active_set,"while insert");
-    //   search_times--;
-    // }
-    // 异步启动合并任务，调用 merge_kernel 函数
-    // bool expected = true;
-    // if (::_merge_level0_done.compare_exchange_strong(expected, false)) {
-    //   ::merge_disk_future =
-    //   std::async(std::launch::async, merge_disk_kernel<T, TagT>, std::ref(lsm_index));
-    // }
-    // 每次搜索后休眠 10 秒
+    search_kernel<T>(iter, lsm_index, active_set,"while insert");
+
+    // 每次搜索后休眠 1 秒
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 
   // 如果插入操作已完成，重置状态并执行后续操作
   if (::_insertions_done.load()) {
     ::_insertions_done.store(false);
-
-    // std::cout << "Searching before insert at " << ::global_timer.elapsed() / 1000000 <<std::endl;
     ShowMemoryStatus(iter);
     // 调用 search_kernel 执行搜索操作，使用 active_set
-    // lsm_index.ReportIndexInfo();
-    // if(search_times > 0){
-      search_kernel<T>(iter,lsm_index, active_set, "before insert");
-    //   search_times--;
-    // }
+    search_kernel<T>(iter,lsm_index, active_set, "before insert");
 
     std::cout << "ITER: Seeding iteration"
               << "\n";
@@ -833,53 +833,42 @@ void run_merge_insert_iter(int iter,lsmidx::LSMVectorIndex<T, TagT>& lsm_index,
 
   // 检查合并任务的状态
   while (!(::_merge_mem_done.load() && ::_merge_level0_done.load())) {
-    // std::cout << "Search while merge at " << ::global_timer.elapsed() / 1000000 << std::endl;
     ShowMemoryStatus(iter);
     // 在合并任务进行过程中，不断执行搜索操作
-    // if(search_times > 0){
-      search_kernel<T>(iter,lsm_index, active_set, "while merge");
-    //   search_times--;
-    // }
-    // 每次搜索后休眠10秒
+
+    search_kernel<T>(iter,lsm_index, active_set, "while merge");
+    // 每次搜索后休眠1秒
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   };
-  // copyToIteratedDirectory(iter, directory);
-  // while(search_times > 0){
-    // search_kernel<T>(lsm_index, active_set);
-  //   search_times--;
-  // }
 }
 template<typename T, typename TagT = uint32_t>
 void run_iter(int iter,lsmidx::LSMVectorIndex<T, TagT>& lsm_index,
+              std::string directory,
               tsl::robin_set<uint32_t> &active_set,
               tsl::robin_set<uint32_t> &inactive_set) {
   // files for insert
-  std::string insert_prefix = "insert";
+  std::string insert_prefix = directory + "/insert";
   std::string insert_pts_file = insert_prefix + ".data_orig";
   std::string insert_tags_file = insert_prefix + ".tags_orig";
-  std::this_thread::sleep_for(std::chrono::seconds(10));  // 休眠10秒以确保同步
-
-  bool expected = true;
-  if (::_merge_level0_done.compare_exchange_strong(expected, false)) {
-    // 异步启动合并任务，调用 merge_kernel 函数
+  std::this_thread::sleep_for(std::chrono::seconds(1));  // 休眠1秒以确保同步
+  ShowMemoryStatus(iter);
+  bool expected = false;
+  if(::_merge_level0_start.compare_exchange_strong(expected, true)){
     ::merge_disk_future =
         std::async(std::launch::async, merge_disk_kernel<T, TagT>, std::ref(lsm_index));
   }
 
+  bool expected2 = false;
+  if (::_merge_mem_start.compare_exchange_strong(expected2, true)) {
+    ::merge_mem_future =
+    std::async(std::launch::async, merge_mem_kernel<T, TagT>, std::ref(lsm_index));
+  }
   // 在插入和删除操作未完成时，不断执行搜索操作
   while (!(::_insertions_done.load() && ::_del_done.load())) {
-    std::cout << "Searching while insert/delete at " << ::global_timer.elapsed() / 1000000 << std::endl;
-
     // 调用 search_kernel 执行搜索操作，使用 active_set
-    search_kernel<T>(iter,lsm_index, active_set);
-    // 异步启动合并任务，调用 merge_kernel 函数
-    // if(::merge_status == std::future_status::ready){
-    //   ::merge_future =
-    //   std::async(std::launch::async, merge_kernel<T, TagT>, std::ref(lsm_index));
-    // }
-    // ::merge_status = ::merge_future.wait_for(std::chrono::milliseconds(1));
-    // 每次搜索后休眠 5 秒
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    search_kernel<T>(iter,lsm_index, active_set, "while insert");
+    // 每次搜索后休眠 1 秒
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 
   // 如果插入和删除操作已完成，重置状态并执行后续操作
@@ -887,10 +876,9 @@ void run_iter(int iter,lsmidx::LSMVectorIndex<T, TagT>& lsm_index,
     ::_insertions_done.store(false);
     ::_del_done.store(false);
 
-    std::cout << "Searching before insert/delete at" << ::global_timer.elapsed() / 1000000 << std::endl;
-
+    ShowMemoryStatus(iter);
     // 调用 search_kernel 执行搜索操作，使用 active_set
-    search_kernel<T>(iter,lsm_index, active_set);
+    search_kernel<T>(iter,lsm_index, active_set, "before insert");
 
     std::cout << "ITER: Seeding iteration"
               << "\n";
@@ -912,14 +900,14 @@ void run_iter(int iter,lsmidx::LSMVectorIndex<T, TagT>& lsm_index,
   // 检查合并任务的状态
   while (!(::_merge_mem_done.load() && ::_merge_level0_done.load())) {
     // 非阻塞式等待合并任务完成，每次等待1毫秒
-    std::cout << "Search whilr merge at " << ::global_timer.elapsed() / 1000000 << std::endl;
-
+    ShowMemoryStatus(iter);
     // 在合并任务进行过程中，不断执行搜索操作
-    search_kernel<T>(iter,lsm_index, active_set);
+    search_kernel<T>(iter,lsm_index, active_set, "while merge");
 
     // 每次搜索后休眠1秒
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   };
+  check_redistribute(lsm_index);
 }
 
 template<typename T, typename TagT = uint32_t>
@@ -957,7 +945,6 @@ void run_all_iters(const std::string working_dir, const std::string index_name, 
   tsl::robin_set<uint32_t> active_tags;
   std::cout << "【 Load Active Tags 】" << std::endl;
   lsm_index.GetActiveTags(active_tags);
-  print_tags(active_tags);
   std::cout << "Loaded " << active_tags.size() << " tags" << std::endl;
   size_t tag_num = active_tags.size();
 
@@ -981,7 +968,7 @@ void run_all_iters(const std::string working_dir, const std::string index_name, 
   for (size_t i = 0; i < n_iters; i++) {
     std::cout << "============ITER : " << i <<"============="<< std::endl;
     if(::include_delete){
-      run_iter<T>(i, lsm_index, active_tags, inactive_tags);
+      run_iter<T>(i, lsm_index, working_dir+'/'+index_name, active_tags, inactive_tags);
     }else{
       run_merge_insert_iter<T>(i, lsm_index, working_dir+'/'+index_name ,active_tags, inactive_tags);
     }
@@ -990,41 +977,17 @@ void run_all_iters(const std::string working_dir, const std::string index_name, 
 
     // 调用 search_kernel 执行搜索操作，使用 active_set
     search_kernel<T>(n_iters,lsm_index, active_tags,"while insert");
-    // 异步启动合并任务，调用 merge_kernel 函数
-    // bool expected = true;
-    // if (::_merge_level0_done.compare_exchange_strong(expected, false)) {
-    //   ::merge_disk_future =
-    //   std::async(std::launch::async, merge_disk_kernel<T, TagT>, std::ref(lsm_index));
-    // }
     // 每次搜索后休眠 10 秒
     std::this_thread::sleep_for(std::chrono::milliseconds(10000));
   }
   ::_merge_level0_start.store(false);
+  ::_merge_mem_start.store(false);
   while (!(::_merge_mem_done.load() && ::_merge_level0_done.load())) {
     // 在合并任务进行过程中，不断执行搜索操作
     search_kernel<T>(n_iters, lsm_index, active_tags, "while merge");
     // 每次搜索后休眠10秒
     std::this_thread::sleep_for(std::chrono::milliseconds(10000));
   };
-  // lsm_index.ReportIndexInfo();
-  /*
-  std::cout << "Done running all iterations, now merging any leftover points."
-            << std::endl;
-  std::future_status merge_status, insert_status, delete_status;
-  do {
-    merge_status = ::merge_future.wait_for(std::chrono::milliseconds(1));
-    insert_status = ::insert_future.wait_for(std::chrono::milliseconds(1));
-    delete_status = ::delete_future.wait_for(std::chrono::milliseconds(1));
-
-    //    search_kernel<T>(merge_insert, active_tags,
-    //    false);
-  } while ((merge_status != std::future_status::ready) ||
-           (insert_status != std::future_status::ready) ||
-           (delete_status != std::future_status::ready));
-  merge_kernel(merge_insert);
-  */
-  //  search_kernel<T, TagT>(merge_insert, active_tags,
-  //  true);
 }
 
 int main(int argc, char **argv) {

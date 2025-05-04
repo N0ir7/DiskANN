@@ -162,7 +162,7 @@ namespace diskann {
      }
 
  template<typename T, typename TagT>
- int MergeInsert<T, TagT>::insert(const T* point, const TagT& tag)
+ int MergeInsert<T, TagT>::insert(const T* point, const TagT& tag, diskann::InsertStats *stats)
  {
      while(_check_switch_index.load())
      {
@@ -184,7 +184,7 @@ namespace diskann {
          {
              if(_mem_index_0->get_num_points() < _mem_index_0->return_max_points())
              {
-                 if(_mem_index_0->insert_point(point, _paras_mem, tag) != 0)
+                 if(_mem_index_0->insert_point(point, _paras_mem, tag, stats) != 0)
                  {
                      diskann::cout << "Could not insert point with tag " << tag << std::endl;
                      return -3;
@@ -204,7 +204,7 @@ namespace diskann {
          {
              if(_mem_index_1->get_num_points() < _mem_index_1->return_max_points())
              {
-                 if(_mem_index_1->insert_point(point, _paras_mem, tag) != 0)
+                 if(_mem_index_1->insert_point(point, _paras_mem, tag, stats) != 0)
                  {
                      diskann::cout << "Could not insert point with tag " << tag << std::endl;
                      return -3;
@@ -321,12 +321,15 @@ namespace diskann {
  template<typename T, typename TagT>
  int MergeInsert<T,TagT>::trigger_merge()
  {
+     diskann::cout << "Inside trigger_merge()." << std::endl;
+     diskann::cout << _mem_index_0->get_num_points() << "  " << _mem_index_1->get_num_points() << std::endl;
      if(_mem_points >= _merge_th)
      {
          save_del_set();
          switch_index();
          return 1;
      }
+     diskann::cout << _mem_index_0->get_num_points() << "  " << _mem_index_1->get_num_points() << std::endl;
      return 0;
  }
 

@@ -25,7 +25,7 @@ typedef enum IndexType {
 template<typename T, typename TagT = uint32_t>
 class LevelIndex{
 public:
-  virtual void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats=nullptr) = 0;
+  virtual void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats=nullptr) = 0;
   virtual void GetActiveTags(tsl::robin_set<TagT>& active_tags) = 0;
   virtual int GetCurrentNumPoints() = 0;
   virtual void ClearIndex() = 0;
@@ -106,7 +106,8 @@ public:
 template<typename T, typename TagT = uint32_t>
 class PQFlashIndexProxy : public LevelIndex<T, TagT>{
 public:
-  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats=nullptr) override;
+  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats=nullptr) override;
+  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats, diskann::ThreadData<T>* thread_data);
 
   void GetActiveTags(tsl::robin_set<TagT>& active_tags) override;
   int GetCurrentNumPoints() override;
@@ -125,6 +126,10 @@ public:
   std::shared_ptr<diskann::PQFlashIndex<T, TagT>> GetIndex();
   void ReportQueryInfo(int query_num=0);
   std::string ReportIndexInfo() override;
+  diskann::ThreadData<T> PopThreadData();
+  void PushThreadData(diskann::ThreadData<T> data);
+  void PrecomputeChunkDistance(diskann::ThreadData<T>& data, const T *query);
+  float GetMinClusterDistance(diskann::ThreadData<T>& data);
 private:
   std::shared_ptr<diskann::PQFlashIndex<T, TagT>> index;
   std::shared_ptr<AlignedFileReader> reader;
@@ -134,7 +139,7 @@ private:
 template<typename T, typename TagT = uint32_t>
 class MultiPQFlashIndexProxy : public MultiIndex<T, TagT>{
 public:
-  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats=nullptr) override;
+  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats=nullptr) override;
 
   void GetActiveTags(tsl::robin_set<TagT>& active_tags) override;
   int GetCurrentNumPoints() override;
@@ -146,6 +151,7 @@ public:
   void ClearIndex() override;
   int  GetFreeIndexSlot();
   std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> GetNonFreeIndexList();
+  size_t GetNonFreeIndexesSize();
   std::unique_lock<std::shared_mutex> GetSubWriteLock(size_t idx) override;
   std::shared_lock<std::shared_mutex> GetSubReadLock(size_t idx) override;
   std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>> GetIndexProxy(size_t idx);
@@ -158,11 +164,12 @@ public:
   std::string ReportIndexInfo() override;
 private:
   std::vector<std::shared_ptr<lsmidx::PQFlashIndexProxy<T, TagT>>> indexes;
-  // std::vector<std::unique_ptr<std::shared_mutex>> locks;
   std::shared_mutex free_slots_lock;
   std::queue<int> free_slots;
   int num_threads_for_search;
   std::vector<std::shared_ptr<AlignedFileReader>> readers;
+  std::vector<unsigned> index_timestamp;
+  unsigned timestamp = 0;
   // std::shared_ptr<AlignedFileReader> reader;
   
 };
@@ -170,14 +177,14 @@ private:
 template<typename T, typename TagT = uint32_t>
 class InMemIndexProxy : public LevelIndex<T, TagT>{
 public:
-  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats=nullptr) override;
+  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats=nullptr) override;
   
   void GetActiveTags(tsl::robin_set<TagT>& active_tags) override;
 
   InMemIndexProxy(diskann::Metric dist_metric, std::string working_dir, int idx, size_t dims, size_t merge_thresh, std::shared_ptr<diskann::Parameters> paras_mem, bool is_single_file_index);
 
   int LazyDelete(TagT tag);
-  int Put(const WriteOptions& options, const VecSlice<T>& key, const TagT& value);
+  int Put(const WriteOptions& options, const VecSlice<T>& key, const TagT& value, diskann::InsertStats * stats = nullptr);
 
   std::string SaveIndex();
   void ClearIndex() override;
@@ -193,7 +200,7 @@ private:
 template<typename T, typename TagT = uint32_t>
 class MultiInMemIndexProxy : public MultiIndex<T, TagT>{
 public:
-  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, diskann::QueryStats * stats=nullptr) override;
+  void KNNQuery(const T *query, std::vector<diskann::Neighbor_Tag<TagT>>& res, SearchOptions options, std::vector<lsmidx::TagDeleter<TagT>*> exclude_set_list, diskann::QueryStats * stats=nullptr) override;
   
   void GetActiveTags(tsl::robin_set<TagT>& active_tags) override;
 
@@ -218,6 +225,7 @@ public:
   std::shared_ptr<lsmidx::InMemIndexProxy<T, TagT>> GetIndexProxy(size_t idx);
   void RefreshDeleteTagSet() override;
   std::string ReportIndexInfo() override;
+  void RecalculateInsertMemIndexEntryPoint();
 private:
   /**
    * current 表示现在Head Ptr所指向的index
@@ -228,7 +236,5 @@ private:
   std::vector<std::shared_ptr<lsmidx::InMemIndexProxy<T, TagT>>> indexes;
   
   std::vector<std::unique_ptr<std::atomic_bool>> index_clearing_states;
-  // std::vector<std::unique_ptr<std::shared_mutex>> clear_locks;  // lock to prevent an index from being cleared when it
-                                        // is being searched  and vice versa
 };
 } // namespace lsmidx

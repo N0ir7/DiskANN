@@ -29,7 +29,9 @@
 #include "windows_customizations.h"
 
 // #define MERGE_TH 18000000
-#define MERGE_TH 1 << 14
+#define MERGE_TH (1 << 14)
+// #define MERGE_TH 1 << 24
+// #define MERGE_TH ((1 << 14)*10)
 
 namespace diskann {
 
@@ -46,7 +48,7 @@ namespace diskann {
     DISKANN_DLLEXPORT ~MergeInsert();
 
     // insertion function - insert into short_term_index
-    DISKANN_DLLEXPORT int insert(const T* point, const TagT& tag);
+    DISKANN_DLLEXPORT int insert(const T* point, const TagT& tag, diskann::InsertStats *stats = nullptr);
 
     DISKANN_DLLEXPORT void lazy_delete(const TagT& tag);
     //DISKANN_DLLEXPORT void lazy_delete(tsl::robin_set<TagT>& delete_list);

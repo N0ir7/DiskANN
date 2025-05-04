@@ -8,6 +8,7 @@
 #include <string>
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
+#include "lsm/tag_deleter.h"
 
 #include "aligned_file_reader.h"
 #include "concurrent_queue.h"
@@ -53,18 +54,20 @@ namespace diskann {
   struct DiskNode {
     uint32_t  id = 0;
     T        *coords = nullptr;
-    uint32_t  nnbrs;
-    uint32_t *nbrs;
+    uint32_t  nnbrs = 0;
+    uint32_t *nbrs = nullptr;
 
     // id : id of node
     // sector_buf : sector buf containing `id` data
     DiskNode(uint32_t id, T *coords, uint32_t *nhood);
+    DiskNode(){};
   };
 
   template<typename T>
   struct ThreadData {
     QueryScratch<T> scratch;
     IOContext       ctx;
+    bool            is_precompute_chunks = false;
   };
 
   template<typename T, typename TagT = uint32_t>
@@ -129,10 +132,16 @@ namespace diskann {
     // setting up thread-specific data
 
     // implemented
-    DISKANN_DLLEXPORT size_t
-    cached_beam_search(const T *query, const _u64 k_search, const _u64 l_search,
-                       TagT *res_tags, float *res_dists, const _u64 beam_width,
-                       QueryStats *stats = nullptr);
+    DISKANN_DLLEXPORT size_t cached_beam_search(
+        const T *query, const _u64 k_search, const _u64 l_search,
+        TagT *res_tags, float *res_dists, const _u64 beam_width,
+        QueryStats *stats = nullptr, ThreadData<T> *passthrough_data = nullptr);
+
+    DISKANN_DLLEXPORT size_t cached_beam_search_excludes(
+        const T *query, const _u64 k_search, const _u64 l_search,
+        TagT *res_tags, float *res_dists, const _u64 beam_width,
+        std::vector<lsmidx::TagDeleter<TagT> *> &exclude_set_list,
+        QueryStats *stats = nullptr, ThreadData<T> *passthrough_data = nullptr);
 
     DISKANN_DLLEXPORT size_t cached_beam_search_ids(
         const T *query, const _u64 k_search, const _u64 l_search,
@@ -153,6 +162,13 @@ namespace diskann {
         tsl::robin_map<uint32_t, T *> *coord_map = nullptr,
         QueryStats *stats = nullptr, ThreadData<T> *passthrough_data = nullptr,
         tsl::robin_set<uint32_t> *exclude_nodes = nullptr);
+
+    DISKANN_DLLEXPORT void disk_iterate_to_fixed_point_excludes(
+        const T *vec, const uint32_t Lsize, const uint32_t beam_width,
+        std::vector<Neighbor>                   &expanded_nodes_info,
+        std::vector<lsmidx::TagDeleter<TagT> *> &exclude_set_list,
+        tsl::robin_map<uint32_t, T *>           *coord_map = nullptr,
+        QueryStats *stats = nullptr, ThreadData<T> *passthrough_data = nullptr);
     std::vector<uint32_t> get_init_ids() {
       return std::vector<uint32_t>(this->medoids,
                                    this->medoids + this->num_medoids);
@@ -216,6 +232,10 @@ namespace diskann {
     DISKANN_DLLEXPORT void get_active_tags(tsl::robin_set<TagT> &active_tags);
 
     DISKANN_DLLEXPORT int get_vector_by_tag(const TagT &tag, T *vector);
+    DISKANN_DLLEXPORT ThreadData<T> pop_thread_data();
+    DISKANN_DLLEXPORT void          push_thread_data(ThreadData<T> data);
+    DISKANN_DLLEXPORT void precompute_chunk_distance(ThreadData<T> &data,
+                                                     const T       *query1);
 
     // index info
     // nhood of node `i` is in sector: [i / nnodes_per_sector]

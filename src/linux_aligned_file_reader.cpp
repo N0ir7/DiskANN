@@ -57,7 +57,7 @@ namespace {
                     << ", expected=" << n_ops << ", ernno=" << errno << "="
                     << ::strerror((int) -ret) << ", try #" << n_tries + 1;
           diskann::cout << "ctx: " << ctx << "\n";
-          exit(-1);
+          // exit(-1);
         } else {
           // wait on io_getevents
           ret = io_getevents(ctx, (int64_t) n_ops, (int64_t) n_ops, evts.data(),
@@ -67,7 +67,7 @@ namespace {
             std::cerr << "io_getevents() failed; returned " << ret
                       << ", expected=" << n_ops << ", ernno=" << errno << "="
                       << ::strerror((int) -ret) << ", try #" << n_tries + 1;
-            exit(-1);
+            // exit(-1);
           } else {
             break;
           }

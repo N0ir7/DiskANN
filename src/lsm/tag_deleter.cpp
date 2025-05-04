@@ -195,5 +195,6 @@ void TagDeleter<TagT>::Union(TagDeleter<TagT>& union_delete_set){
 template class TagDeleter<uint32_t>;
 template class TagDeleter<int64_t>;
 template class TagDeleter<uint64_t>;
+template class TagDeleter<int32_t>;
 
 } // namesp lsmidx
